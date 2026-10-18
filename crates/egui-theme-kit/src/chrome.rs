@@ -126,15 +126,23 @@ impl ChromePrefs {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let json = serde_json::to_string_pretty(self)?;
         let temp = path.with_extension("json.tmp");
-        let written = std::fs::write(&temp, serde_json::to_string_pretty(self)?)
-            .and_then(|()| std::fs::File::open(&temp)?.sync_all())
-            .and_then(|()| std::fs::rename(&temp, path));
+        let written =
+            write_synced(&temp, json.as_bytes()).and_then(|()| std::fs::rename(&temp, path));
         if written.is_err() {
             let _ = std::fs::remove_file(&temp);
         }
         Ok(written?)
     }
+}
+
+/// Creates `path` and writes `bytes` to it; the handle is opened for writing so `sync_all` is allowed on Windows.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
