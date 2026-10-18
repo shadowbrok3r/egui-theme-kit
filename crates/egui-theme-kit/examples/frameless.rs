@@ -1,11 +1,11 @@
-//! An app with the app-drawn title bar: `cargo run -p egui-theme-kit --example frameless`.
+//! An app with the app-drawn title bar: `cargo run -p egui-theme-kit --example frameless --features title-bar`.
 //!
 //! Pass `--system-titlebar` (or set `EGUI_THEME_KIT_SYSTEM_TITLEBAR=1`) to keep the system title bar
 //! for one launch; View > Custom title bar switches live and is remembered between launches.
 
 use std::sync::Arc;
 
-use eframe::egui::{self, CentralPanel, Panel, RichText};
+use eframe::egui::{self, CentralPanel, Panel, RichText, class::HasClasses as _};
 use egui_theme_kit::{
     KitConfig,
     chrome::{self, Chrome},
@@ -15,6 +15,7 @@ use egui_theme_kit::{
     picker::{self, PickerState},
     store::JsonDirStore,
     title_bar::{Side, TitleBar, window_edges, windows::client_area},
+    widget_theme,
 };
 
 const APP_ID: &str = "egui-theme-kit-frameless-example";
@@ -113,8 +114,9 @@ impl App {
                 self.picker.open = true;
             }
         });
-        // A stock egui menu button sits in the slot the same way.
-        ui.menu_button("Help", |ui| {
+        // A stock egui menu button sits in the slot the same way, with the kit's ghost class.
+        let help = egui::Button::new("Help").with_class(widget_theme::GHOST);
+        egui::containers::menu::MenuButton::from_button(help).ui(ui, |ui| {
             if ui.button("About").clicked() {
                 self.about_open = true;
             }

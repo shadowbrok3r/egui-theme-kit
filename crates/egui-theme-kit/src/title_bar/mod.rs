@@ -1,4 +1,8 @@
 //! App-drawn window top strip: mark, caller content, title, caption buttons, drag area and resize edges.
+//!
+//! Show [`TitleBar`] before any other panel and call [`window_edges`] last in the frame. Choose between
+//! this strip and the system one with [`crate::chrome`], and call [`windows::client_area::install`]
+//! once at startup. `docs/porting-title-bar.md` walks through moving an existing app over.
 
 pub mod windows;
 
@@ -132,6 +136,9 @@ impl<'a> TitleBar<'a> {
     }
 
     /// Draws the strip; `add` fills [`Side::Right`] and then [`Side::Left`].
+    ///
+    /// The title and the drag area live in the free space between the two ends, so the content must
+    /// not claim the whole width: `egui::MenuBar::ui` does, so put its menu buttons in the slot directly.
     pub fn show<R>(self, ui: &mut Ui, add: impl FnMut(&mut Ui, Side) -> R) -> TitleBarOutput<R> {
         let (t, m) = kit(ui);
         Panel::top(self.id)
@@ -920,5 +927,43 @@ mod tests {
         assert!(!clicks, "the injected release counted as a click");
         assert!(!w.ctx.input(|i| i.pointer.any_down()));
         assert!(w.clicked.is_empty());
+    }
+
+    /// Every filled rectangle of the last frame.
+    fn fills(w: &Win) -> Vec<Color32> {
+        fn walk(shape: &Shape, out: &mut Vec<Color32>) {
+            match shape {
+                Shape::Vec(inner) => inner.iter().for_each(|s| walk(s, out)),
+                Shape::Rect(r) => out.push(r.fill),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        w.shapes.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    }
+
+    #[test]
+    fn caption_buttons_fill_on_hover_and_press_and_close_goes_red() {
+        let mut w = Win::new(1000.0);
+        w.frame(vec![]);
+        w.frame(vec![]);
+        let t = Tokens::get(&w.ctx);
+        let [min, _, close] = Caption::ALL.map(|c| w.rect_of(c.id()).center());
+        assert!(!fills(&w).contains(&CLOSE_HOVER));
+        w.frame(vec![Event::PointerMoved(close)]);
+        w.frame(vec![]);
+        assert!(fills(&w).contains(&CLOSE_HOVER), "no red hover fill");
+        w.frame(vec![button(close, true)]);
+        assert!(fills(&w).contains(&CLOSE_PRESS), "no pressed fill");
+        w.frame(vec![button(close, false)]);
+        w.frame(vec![Event::PointerMoved(min)]);
+        w.frame(vec![]);
+        let fills = fills(&w);
+        assert!(fills.contains(&t.hover), "no neutral hover fill");
+        assert!(
+            !fills.contains(&CLOSE_HOVER),
+            "the red fill stayed after leaving"
+        );
     }
 }

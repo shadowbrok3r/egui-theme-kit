@@ -53,7 +53,7 @@ egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev =
 | `data-table` | yes | `table_style` selection colors for `egui-data-table` |
 | `picker` | yes | the theme picker window |
 | `controls` | no | painted control kit (buttons, toggles, fields, list rows, meters, glass card) |
-| `title-bar` | no | custom window title bar with caption buttons, drag area and resize edges (implies `controls`) |
+| `title-bar` | no | custom window title bar with caption buttons, drag area and resize edges, the saved custom-or-system choice (`chrome`) and the Windows client-area fix (implies `controls`) |
 | `logger` | no | in-app log viewer (implies `controls`) |
 
 The defaults match the author's apps, which use every one of these companions. For a smaller dependency tree use `default-features = false` and enable what you need; the core (tokens, metrics, fonts, widget theme, presets, saved themes, debug panel) needs only `egui`, `eframe`, `egui_extras` and a few small crates (`serde`, `serde_json`, `anyhow`, `log`).
@@ -190,6 +190,48 @@ Caveats:
 - **Kill switch.** Three consecutive failed frames disable frosting for the process; `glass::disable(reason)` and `glass::reenable()` do it by hand.
 - **Opt out.** `--no-frost` on the command line or `EGUI_THEME_KIT_NO_FROST=1` in the environment turns frosting off for the run.
 
+## Custom title bar
+
+The `title-bar` feature draws the window's top strip inside egui, so every app can share one title bar: a mark, your own controls (a menu bar goes in the left slot, status in the right), the title, minimize / maximize / close buttons, a drag area and resize edges. The user can switch back to the system title bar at any time, live or with a flag.
+
+![The frameless example under KWin on X11](docs/images/title-bar-frameless.png)
+
+```toml
+egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", default-features = false, features = ["title-bar", "files"] }
+```
+
+```rust
+use egui_theme_kit::{
+    chrome,
+    title_bar::{Side, TitleBar, window_edges, windows::client_area},
+};
+
+// main: decide the chrome, build the viewport, fix the Windows client area
+let chrome = chrome::resolve_from_process("my-app");
+let viewport = chrome::viewport(egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]), &chrome);
+// ... in the app creator: client_area::install(cc); egui_theme_kit::init(cc, KitConfig::default());
+
+// App::ui: the strip first, the resize edges last
+let frameless = self.chrome.frameless;
+TitleBar::new("my_app.title_bar", "My App")
+    .frameless(frameless)
+    .show(ui, |ui, side| match side {
+        Side::Left => { ui.menu_button("File", |ui| { /* ... */ }); }
+        Side::Right => { ui.label("Ready"); }
+    });
+egui::CentralPanel::default().show(ui, |ui| { /* ... */ });
+if frameless {
+    window_edges(ui);
+}
+```
+
+- `chrome::toggle_row` is a menu row that switches the window between the two title bars and remembers the choice in `<config_dir>/<app_id>/window_settings.json`; `chrome::set_frameless` does the same from code.
+- `--system-titlebar` or `EGUI_THEME_KIT_SYSTEM_TITLEBAR=1` keeps the system title bar for one launch without touching the saved choice.
+- `title_bar::windows::client_area::install(cc)` is the Windows `WM_NCCALCSIZE` fix for undecorated windows; call it on every platform, it does nothing elsewhere.
+- Run `cargo run -p egui-theme-kit --example frameless --features title-bar` for a complete app (add `-- --system-titlebar` for the system bar).
+
+[docs/porting-title-bar.md](docs/porting-title-bar.md) is the step-by-step guide for an existing eframe app, with a before/after for the menu bar, the platform notes and the table of what was checked on real window managers (KWin on X11 and Wayland) and what was not (Windows, other desktops).
+
 ## Command line and environment
 
 | Switch | Effect |
@@ -198,11 +240,13 @@ Caveats:
 | `--theme-dump` | Print the resolved tokens, metrics and fonts as JSON and exit (needs `cli::handle_dump`) |
 | `--theme-panel` | Open the Theme window at startup |
 | `--no-frost` | Disable the glass pass for this run |
+| `--system-titlebar` | Keep the system title bar for this run (read by `chrome::resolve`, not by `cli`) |
 
 | Variable | Effect |
 |---|---|
 | `EGUI_THEME_KIT_THEME` | Theme file path, the same as `--theme` when the flag is absent |
 | `EGUI_THEME_KIT_NO_FROST` | Any value other than empty, `0`, `false`, `off` or `no` disables frosting |
+| `EGUI_THEME_KIT_SYSTEM_TITLEBAR` | Same values as above; keeps the system title bar for the run (read by `chrome::resolve`) |
 
 `init` reads the process arguments itself unless you installed options first (set `KitConfig::parse_cli` to `false` to keep it from reading them). To support `--theme-dump`, handle it before opening a window:
 
