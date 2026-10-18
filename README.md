@@ -292,6 +292,8 @@ egui_theme_kit::init(cc, KitConfig::new().store(store.clone()));
 store.reload();
 ```
 
+`cargo run -p egui-theme-kit --example late_store -- --delay 3` shows it in a window: the store opens after the delay and the theme switches without any input, unless the theme was changed first.
+
 `init` also registers a plugin that calls `startup::poll_store(ctx)` at the start of every pass. It compares the store's `revision()` and does nothing unless the store became ready or changed:
 
 | Situation | Result |

@@ -1,7 +1,13 @@
-//! Popups over dense text under a glass preset: `cargo run --example glass_popups -- --preset frost`.
+//! Popups over dense text under a glass preset: `cargo run --example glass_popups -- --preset frost [--picker]`.
 
-use eframe::egui::{self, CentralPanel, ComboBox, Context, Ui, Window};
-use egui_theme_kit::{KitConfig, glass};
+use std::sync::Arc;
+
+use eframe::egui::{self, CentralPanel, ComboBox, Context, Id, Ui, Window};
+use egui_theme_kit::{
+    KitConfig, glass,
+    picker::{self, PickerOptions, PickerState},
+    store::MemoryStore,
+};
 
 const LINE: &str =
     "The quick brown fox jumps over the lazy dog while the five boxing wizards jump quickly";
@@ -9,6 +15,8 @@ const LINE: &str =
 struct App {
     mode: usize,
     inner_mode: usize,
+    store: Arc<MemoryStore>,
+    picker: PickerState,
 }
 
 impl App {
@@ -17,10 +25,18 @@ impl App {
         if let Some(preset) = preset_arg() {
             cfg = cfg.default_preset(preset);
         }
-        egui_theme_kit::init(cc, cfg);
+        let store = Arc::new(MemoryStore::default());
+        egui_theme_kit::init(cc, cfg.store(store.clone()));
+        let options = PickerOptions::default()
+            .with_title("Appearance")
+            .with_window_id(Id::unique("glass_popups.appearance"));
+        let mut picker = PickerState::new(options);
+        picker.open = std::env::args().any(|arg| arg == "--picker");
         Self {
             mode: 1,
             inner_mode: 0,
+            store,
+            picker,
         }
     }
 }
@@ -60,6 +76,9 @@ impl eframe::App for App {
         CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.menu_button("Menu", |ui| {
+                    if ui.button("Appearance...").clicked() {
+                        self.picker.open = true;
+                    }
                     let _ = ui.button("First entry");
                     let _ = ui.button("Second entry");
                     ui.menu_button("Submenu", |ui| {
@@ -75,6 +94,8 @@ impl eframe::App for App {
                 ui.label(format!("{i:02} {LINE}"));
             }
         });
+
+        picker::window(&ctx, &mut self.picker, &*self.store);
 
         Window::new("Floating window")
             .default_pos([520.0, 140.0])

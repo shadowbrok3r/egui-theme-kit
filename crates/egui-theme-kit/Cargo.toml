@@ -65,7 +65,7 @@ required-features = ["picker", "files"]
 
 [[example]]
 name = "glass_popups"
-required-features = ["glass"]
+required-features = ["glass", "picker"]
 
 [[example]]
 name = "controls"
