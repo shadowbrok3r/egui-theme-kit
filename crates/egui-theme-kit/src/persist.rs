@@ -24,7 +24,9 @@ pub const STORAGE_KEY: &str = "egui_theme_kit.theme.v1";
 static DEFAULT_THEME: RwLock<Option<SavedTheme>> = RwLock::new(None);
 
 /// Replaces the process-wide fallback default theme; read once by [`init`](crate::init) when the config names no default.
-#[deprecated(note = "set `KitConfig::default_theme` or `KitConfig::default_preset`; this process-wide value only feeds `init` when the config names no default")]
+#[deprecated(
+    note = "set `KitConfig::default_theme` or `KitConfig::default_preset`; this process-wide value only feeds `init` when the config names no default"
+)]
 pub fn set_default_theme(theme: SavedTheme) {
     if let Ok(mut slot) = DEFAULT_THEME.write() {
         *slot = Some(theme);
@@ -50,7 +52,9 @@ pub(crate) fn shipped_default() -> SavedTheme {
 }
 
 /// The process-wide default theme, else Graphite; it knows nothing of the context config.
-#[deprecated(note = "use `default_theme_in`, which honours `KitConfig::default_theme` and `default_preset`")]
+#[deprecated(
+    note = "use `default_theme_in`, which honours `KitConfig::default_theme` and `default_preset`"
+)]
 pub fn default_theme() -> SavedTheme {
     shipped_default()
 }
@@ -150,7 +154,9 @@ pub fn resolve_in(
 }
 
 /// The theme to apply at startup from a [`ThemeStore`]: the `--theme` file, the pinned startup theme, the active theme, else the process-wide default.
-#[deprecated(note = "use `resolve_with_store_in`, which falls back to the config default of the context")]
+#[deprecated(
+    note = "use `resolve_with_store_in`, which falls back to the config default of the context"
+)]
 pub fn resolve_with_store(
     store: &dyn ThemeStore,
     file: Option<&Path>,
@@ -305,7 +311,10 @@ mod tests {
         storage.set_string(STORAGE_KEY, "stale".to_owned());
         save(&ctx, &mut storage);
         assert_eq!(storage.get_string(STORAGE_KEY), None);
-        assert_eq!(resolve_in(&Context::default(), Some(&storage), None).1, ThemeSource::Embedded);
+        assert_eq!(
+            resolve_in(&Context::default(), Some(&storage), None).1,
+            ThemeSource::Embedded
+        );
     }
 
     #[test]
@@ -387,13 +396,19 @@ mod tests {
         assert!(storage.get_string(STORAGE_KEY).is_none());
 
         let missing = dir.path().join("missing.json");
-        assert_eq!(resolve_in(&Context::default(), None, Some(&missing)).1, ThemeSource::Embedded);
+        assert_eq!(
+            resolve_in(&Context::default(), None, Some(&missing)).1,
+            ThemeSource::Embedded
+        );
     }
 
     #[test]
     fn the_store_resolves_file_then_startup_then_active_then_default() {
         let store = MemoryStore::default();
-        assert_eq!(resolve_with_store_in(&Context::default(), &store, None).1, ThemeSource::Embedded);
+        assert_eq!(
+            resolve_with_store_in(&Context::default(), &store, None).1,
+            ThemeSource::Embedded
+        );
 
         let ctx = Context::default();
         apply_preset(&ctx, PresetStyles::Aurora);

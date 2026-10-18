@@ -145,6 +145,9 @@ fn now_secs() -> u64 {
 }
 
 /// Persistent theme storage that never blocks the caller.
+///
+/// A type that wraps another store must forward every method, including [`ThemeStore::is_ready`] and
+/// [`ThemeStore::on_change`]; [`delegate_theme_store!`](crate::delegate_theme_store) does it for a field.
 pub trait ThemeStore: Send + Sync {
     /// The theme that was active when the store last saved, if any.
     fn load_active(&self) -> Option<SavedTheme>;
@@ -185,6 +188,78 @@ pub trait ThemeStore: Send + Sync {
 
 /// A callback a store runs after its visible state changes; it must be cheap and must not call back into the store.
 pub type ChangeCallback = Arc<dyn Fn() + Send + Sync>;
+
+/// Implements [`ThemeStore`] for `$ty` by forwarding every method, `is_ready` and `on_change` included, to its field `$field`.
+///
+/// A store that wraps another one (to add queries, counters or a repaint hook) must forward the whole
+/// trait: a missing `is_ready` reports the wrapper ready before its data was read.
+///
+/// ```ignore
+/// struct AppThemes { inner: egui_theme_kit::store::CachedStore, queued: AtomicUsize }
+/// egui_theme_kit::delegate_theme_store!(AppThemes, inner);
+/// ```
+#[macro_export]
+macro_rules! delegate_theme_store {
+    ($ty:ty, $field:ident) => {
+        impl $crate::store::ThemeStore for $ty {
+            fn load_active(&self) -> Option<$crate::saved::SavedTheme> {
+                $crate::store::ThemeStore::load_active(&self.$field)
+            }
+
+            fn save_active(&self, theme: &$crate::saved::SavedTheme) {
+                $crate::store::ThemeStore::save_active(&self.$field, theme)
+            }
+
+            fn clear_active(&self) {
+                $crate::store::ThemeStore::clear_active(&self.$field)
+            }
+
+            fn user_themes(&self) -> ::std::vec::Vec<$crate::store::NamedTheme> {
+                $crate::store::ThemeStore::user_themes(&self.$field)
+            }
+
+            fn save_user_theme(&self, name: &str, theme: &$crate::saved::SavedTheme) {
+                $crate::store::ThemeStore::save_user_theme(&self.$field, name, theme)
+            }
+
+            fn delete_user_theme(&self, name: &str) {
+                $crate::store::ThemeStore::delete_user_theme(&self.$field, name)
+            }
+
+            fn rename_user_theme(&self, from: &str, to: &str) {
+                $crate::store::ThemeStore::rename_user_theme(&self.$field, from, to)
+            }
+
+            fn startup(&self) -> $crate::store::StartupTheme {
+                $crate::store::ThemeStore::startup(&self.$field)
+            }
+
+            fn set_startup(&self, startup: $crate::store::StartupTheme) {
+                $crate::store::ThemeStore::set_startup(&self.$field, startup)
+            }
+
+            fn revision(&self) -> u64 {
+                $crate::store::ThemeStore::revision(&self.$field)
+            }
+
+            fn last_error(&self) -> Option<::std::string::String> {
+                $crate::store::ThemeStore::last_error(&self.$field)
+            }
+
+            fn clear_error(&self) {
+                $crate::store::ThemeStore::clear_error(&self.$field)
+            }
+
+            fn is_ready(&self) -> bool {
+                $crate::store::ThemeStore::is_ready(&self.$field)
+            }
+
+            fn on_change(&self, callback: $crate::store::ChangeCallback) {
+                $crate::store::ThemeStore::on_change(&self.$field, callback)
+            }
+        }
+    };
+}
 
 /// A change to the stored state, in the form a backend applies.
 #[derive(Clone, Debug)]
@@ -1000,30 +1075,7 @@ mod dir {
         }
     }
 
-    macro_rules! delegate {
-        ($($name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {
-            $(fn $name(&self, $($arg: $ty),*) $(-> $ret)? { self.inner.$name($($arg),*) })*
-        };
-    }
-
-    impl ThemeStore for JsonDirStore {
-        delegate! {
-            load_active() -> Option<SavedTheme>;
-            save_active(theme: &SavedTheme);
-            clear_active();
-            user_themes() -> Vec<NamedTheme>;
-            save_user_theme(name: &str, theme: &SavedTheme);
-            delete_user_theme(name: &str);
-            rename_user_theme(from: &str, to: &str);
-            startup() -> StartupTheme;
-            set_startup(startup: StartupTheme);
-            revision() -> u64;
-            last_error() -> Option<String>;
-            clear_error();
-            is_ready() -> bool;
-            on_change(callback: ChangeCallback);
-        }
-    }
+    crate::delegate_theme_store!(JsonDirStore, inner);
 
     struct DirBackend {
         dir: PathBuf,
@@ -1271,7 +1323,7 @@ impl Fingerprint {
 
 /// Saves the live theme to a [`ThemeStore`] a short while after it last changed.
 ///
-/// A theme that [`startup::poll_store`](crate::startup::poll_store) applied from the store is adopted
+/// A theme that [`poll_store`](crate::startup::poll_store) applied from the store is adopted
 /// as already saved. The theme equal to the context's default clears the stored entry instead of writing it.
 pub struct AutoSave {
     debounce: Duration,
@@ -1482,7 +1534,10 @@ mod tests {
         store.save_active(&nebula);
         assert_eq!(recognised(&store.load_active().unwrap()), Some("nebula"));
         assert!(store.revision() > start);
-        assert!(wakes.load(Ordering::SeqCst) > 0, "a write runs the change callbacks");
+        assert!(
+            wakes.load(Ordering::SeqCst) > 0,
+            "a write runs the change callbacks"
+        );
 
         store.save_user_theme("  Late   Night ", &noir);
         store.save_user_theme("alpha", &nebula);
@@ -1543,6 +1598,38 @@ mod tests {
         assert_eq!(clean_name(&"x".repeat(64)).map(|n| n.len()), Ok(64));
         assert_eq!(clean_name("a\u{7}b"), Err(NameError::Control));
         assert!(NameError::Empty.to_string().contains("name"));
+    }
+
+    #[test]
+    fn a_wrapper_built_with_the_delegate_macro_meets_the_contract() {
+        struct Wrapper {
+            inner: MemoryStore,
+            note: &'static str,
+        }
+
+        crate::delegate_theme_store!(Wrapper, inner);
+
+        let wrapper = Wrapper {
+            inner: MemoryStore::default(),
+            note: "extra field",
+        };
+        assert_eq!(wrapper.note, "extra field");
+        exercise_store(&wrapper);
+
+        let lazy = Wrapper2 {
+            inner: CachedStore::open_lazy(testing::SharedBackend::default()),
+        };
+        assert!(
+            !lazy.is_ready(),
+            "the wrapper reports its inner store's readiness"
+        );
+        testing::connect(&lazy.inner);
+        assert!(lazy.is_ready());
+
+        struct Wrapper2 {
+            inner: CachedStore,
+        }
+        crate::delegate_theme_store!(Wrapper2, inner);
     }
 
     #[test]
@@ -1846,11 +1933,19 @@ mod tests {
         store.save_active(&preset_theme(PresetStyles::Nebula));
         store.flush();
         assert!(backend.rows.lock().unwrap().user_themes.is_empty());
-        assert_eq!(store.user_themes().len(), 300, "the cache shows every write");
+        assert_eq!(
+            store.user_themes().len(),
+            300,
+            "the cache shows every write"
+        );
 
         connect(&store);
         let rows = backend.rows.lock().unwrap().clone();
-        assert_eq!(rows.user_themes.len(), 255, "the newest 256 writes are kept: 255 themes and the active one");
+        assert_eq!(
+            rows.user_themes.len(),
+            255,
+            "the newest 256 writes are kept: 255 themes and the active one"
+        );
         assert_eq!(rows.user_themes[0].name, "theme 045");
         assert_eq!(recognised(&rows.active.unwrap()), Some("nebula"));
         assert_eq!(store.user_themes().len(), 255);
@@ -1944,7 +2039,10 @@ mod tests {
         let after_load = wakes.load(Ordering::SeqCst);
         assert!(after_load > 0, "the finished load wakes the UI");
         store.save_user_theme("   ", &graphite_theme());
-        assert!(wakes.load(Ordering::SeqCst) > after_load, "a rejected write is a visible change");
+        assert!(
+            wakes.load(Ordering::SeqCst) > after_load,
+            "a rejected write is a visible change"
+        );
     }
 
     #[test]

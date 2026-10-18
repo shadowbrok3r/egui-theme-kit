@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use eframe::egui::{CentralPanel, Color32, Context, FullOutput, Id, Pos2, RawInput, Rect, Shape, vec2};
+use eframe::egui::{
+    CentralPanel, Color32, Context, FullOutput, Id, Pos2, RawInput, Rect, Shape, vec2,
+};
 
 use super::{
     MessageKind, Origin, PickerOptions, PickerState,
@@ -669,7 +671,10 @@ fn shape_texts(output: &FullOutput) -> Vec<String> {
         }
     }
     let mut out = Vec::new();
-    output.shapes.iter().for_each(|clipped| collect(&clipped.shape, &mut out));
+    output
+        .shapes
+        .iter()
+        .for_each(|clipped| collect(&clipped.shape, &mut out));
     out
 }
 
@@ -732,13 +737,20 @@ fn a_theme_the_kit_applies_from_the_store_becomes_the_origin_without_a_save() {
     use crate::{
         KitConfig,
         startup::init_context,
-        store::{CachedStore, testing::{SharedBackend, connect}},
+        store::{
+            CachedStore,
+            testing::{SharedBackend, connect},
+        },
     };
 
     let backend = SharedBackend::default();
     let store = std::sync::Arc::new(CachedStore::open_lazy(backend.clone()));
     let ctx = Context::default();
-    init_context(&ctx, None, KitConfig::new().parse_cli(false).store(store.clone()));
+    init_context(
+        &ctx,
+        None,
+        KitConfig::new().parse_cli(false).store(store.clone()),
+    );
     let mut state = PickerState::default();
     run(&ctx, &mut state, &*store);
     assert_eq!(state.origin(), Some(&Origin::Preset("graphite")));
@@ -753,7 +765,11 @@ fn a_theme_the_kit_applies_from_the_store_becomes_the_origin_without_a_save() {
     let revision = store.revision();
     run(&ctx, &mut state, &*store);
     state.flush(&ctx, &*store);
-    assert_eq!(store.revision(), revision, "the applied theme was not written back");
+    assert_eq!(
+        store.revision(),
+        revision,
+        "the applied theme was not written back"
+    );
 }
 
 fn preset_theme_of(id: &str) -> SavedTheme {

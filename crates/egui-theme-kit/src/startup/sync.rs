@@ -42,14 +42,31 @@ pub(super) struct SyncState {
 
 impl SyncState {
     /// State for a store registered while `live` is on screen; `applied` says the startup theme came from the store.
-    pub(super) fn attached(store: &dyn ThemeStore, live: SavedTheme, applied: bool) -> Self {
-        Self {
+    ///
+    /// A ready store without an active theme receives a custom `live` theme here, like a store that becomes ready later.
+    pub(super) fn attached(
+        ctx: &Context,
+        store: &dyn ThemeStore,
+        live: SavedTheme,
+        applied: bool,
+    ) -> Self {
+        let mut state = Self {
             seen_revision: applied.then(|| store.revision()),
             ready_handled: applied,
-            synced: Some(live),
+            synced: Some(live.clone()),
             last_active: applied.then(|| store.load_active()).flatten(),
             epoch: 0,
+        };
+        if applied
+            && state.last_active.is_none()
+            && !from_file(ctx)
+            && !persist::is_default_in(ctx, &live)
+        {
+            store.save_active(&live);
+            state.seen_revision = Some(store.revision());
+            state.last_active = store.load_active();
         }
+        state
     }
 }
 
@@ -61,9 +78,10 @@ impl SyncState {
 pub fn poll_store(ctx: &Context) -> StorePoll {
     let Some((store, seen, handled)) = ctx
         .with_plugin::<KitState, _>(|state| {
-            state.store.clone().map(|store| {
-                (store, state.sync.seen_revision, state.sync.ready_handled)
-            })
+            state
+                .store
+                .clone()
+                .map(|store| (store, state.sync.seen_revision, state.sync.ready_handled))
         })
         .flatten()
     else {
@@ -85,7 +103,7 @@ pub fn poll_store(ctx: &Context) -> StorePoll {
     } else {
         on_ready(ctx, &*store, &mut sync)
     };
-    sync.seen_revision = Some(store.revision());
+    sync.seen_revision = Some(revision);
     sync.ready_handled = true;
     ctx.with_plugin::<KitState, _>(|state| {
         if state
@@ -96,6 +114,10 @@ pub fn poll_store(ctx: &Context) -> StorePoll {
             state.sync = sync;
         }
     });
+    if outcome == StorePoll::Applied {
+        ctx.request_repaint();
+        ctx.request_discard("egui_theme_kit: the stored theme was applied");
+    }
     outcome
 }
 
@@ -147,6 +169,13 @@ fn on_ready(ctx: &Context, store: &dyn ThemeStore, sync: &mut SyncState) -> Stor
         StorePoll::Kept
     };
     sync.last_active = store.load_active();
+    if sync
+        .last_active
+        .as_ref()
+        .is_some_and(|active| themes_equal(active, &SavedTheme::current(ctx)))
+    {
+        sync.synced = Some(SavedTheme::current(ctx));
+    }
     outcome
 }
 
@@ -189,15 +218,16 @@ mod tests {
 
     use super::*;
     use crate::{
+        metrics::Density,
+        presets::{self, apply_preset, installed_preset},
         startup::{
             KitConfig, adopt_live_theme, attach_store, init_context,
             tests::{others, preset_of, preset_theme},
             theme_epoch,
         },
-        metrics::Density,
-        presets::{self, apply_preset, installed_preset},
         store::{
-            AutoSave, CachedStore, MemoryStore, StartupTheme, testing::{SharedBackend, connect},
+            AutoSave, CachedStore, MemoryStore, StartupTheme,
+            testing::{SharedBackend, connect},
         },
     };
 
@@ -222,7 +252,11 @@ mod tests {
                 None,
                 configure(KitConfig::new().parse_cli(false).store(store.clone())),
             );
-            Self { ctx, store, backend }
+            Self {
+                ctx,
+                store,
+                backend,
+            }
         }
 
         /// Puts `theme` in the backend as the stored active theme.
@@ -254,7 +288,11 @@ mod tests {
         assert_ne!(rig.preset(), stored);
         assert_eq!(poll_store(&rig.ctx), StorePoll::Waiting);
         rig.frame();
-        assert_ne!(rig.preset(), stored, "nothing is applied before the store loads");
+        assert_ne!(
+            rig.preset(),
+            stored,
+            "nothing is applied before the store loads"
+        );
 
         rig.connect();
         assert_eq!(poll_store(&rig.ctx), StorePoll::Applied);
@@ -273,6 +311,44 @@ mod tests {
         rig.connect();
         rig.frame();
         assert_eq!(rig.preset(), stored);
+    }
+
+    #[test]
+    fn applying_the_stored_theme_discards_the_pass_so_no_widget_draws_in_the_old_style() {
+        let [stored, ..] = others();
+        let rig = Rig::new();
+        rig.stored(preset_theme(stored, Density::Regular));
+        rig.connect();
+        let passes_of = |rig: &Rig| {
+            let output = rig.ctx.run_ui(RawInput::default(), |_| {});
+            let passes = output.platform_output.num_completed_passes;
+            output.drop_without_applying_deltas();
+            passes
+        };
+        assert_eq!(passes_of(&rig), 2, "the applying pass was repeated");
+        assert_eq!(passes_of(&rig), 1);
+    }
+
+    #[test]
+    fn an_edit_made_before_the_store_was_ready_does_not_block_later_external_changes() {
+        let [stored, chosen, elsewhere, _] = others();
+        let rig = Rig::new();
+        rig.stored(preset_theme(stored, Density::Regular));
+        apply_preset(&rig.ctx, chosen);
+        let mut autosave = AutoSave::new(std::time::Duration::ZERO);
+        autosave.mark_clean(&rig.ctx);
+        apply_preset(&rig.ctx, stored);
+        apply_preset(&rig.ctx, chosen);
+        autosave.update(&rig.ctx, &*rig.store);
+        rig.connect();
+        assert_eq!(poll_store(&rig.ctx), StorePoll::Kept);
+        assert_eq!(rig.preset(), chosen);
+
+        rig.stored(preset_theme(elsewhere, Density::Regular));
+        rig.store.reload();
+        rig.store.flush();
+        assert_eq!(poll_store(&rig.ctx), StorePoll::Applied);
+        assert_eq!(rig.preset(), elsewhere);
     }
 
     #[test]
@@ -407,7 +483,11 @@ mod tests {
         rig.store.reload();
         rig.store.flush();
         assert_eq!(poll_store(&rig.ctx), StorePoll::Kept);
-        assert_eq!(rig.preset(), local, "an unsaved local edit is not overwritten");
+        assert_eq!(
+            rig.preset(),
+            local,
+            "an unsaved local edit is not overwritten"
+        );
     }
 
     #[test]
@@ -445,7 +525,11 @@ mod tests {
         autosave.update(&rig.ctx, &*rig.store);
         autosave.update(&rig.ctx, &*rig.store);
         assert!(!autosave.is_pending());
-        assert_eq!(rig.store.revision(), writes, "the applied theme was adopted, not written");
+        assert_eq!(
+            rig.store.revision(),
+            writes,
+            "the applied theme was adopted, not written"
+        );
     }
 
     #[test]
@@ -502,8 +586,13 @@ mod tests {
         rig.stored(preset_theme(stored, Density::Regular));
         rig.store
             .save_user_theme("Early", &preset_theme(chosen, Density::Regular));
-        rig.store.save_active(&preset_theme(chosen, Density::Regular));
-        assert_eq!(rig.store.user_themes().len(), 1, "the cache shows it at once");
+        rig.store
+            .save_active(&preset_theme(chosen, Density::Regular));
+        assert_eq!(
+            rig.store.user_themes().len(),
+            1,
+            "the cache shows it at once"
+        );
         assert!(rig.backend.rows.lock().unwrap().user_themes.is_empty());
 
         rig.connect();

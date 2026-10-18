@@ -11,7 +11,7 @@ A theme and styling system for [egui](https://github.com/emilk/egui) apps, insta
 - **Stock widget theme.** Buttons, checkboxes, text edits and separators take the kit look without wrapper widgets; classes pick a button kind or opt out.
 - **Fonts.** Inter (Regular, Medium, SemiBold) bundled, medium and semibold weight families, and a `FontConfig` builder for your own faces and icon fonts.
 - **Presets and saved themes.** A preset registry with 19 built-in looks (Graphite, Studio, Noir, Noir Glass, Frost, five neon glass, four soft glass, Tokyo Night and Storm, Rerun and Rerun OLED, Default egui), `register_preset` for your own, JSON import and export, bare `egui::Style` files accepted.
-- **Theme picker.** An embeddable settings panel (`picker::show` / `picker::window`): preset gallery with live miniatures, saved user themes, customization of density, text size, glass and token colors with contrast warnings, import and export. Persistence goes through a small non-blocking `ThemeStore` trait you can implement over any database; `MemoryStore`, `JsonDirStore` and an eframe-storage store are included.
+- **Theme picker.** An embeddable settings panel (`picker::show` / `picker::window`): preset gallery with live miniatures, saved user themes, customization of density, text size, glass and token colors with contrast warnings, import and export. Persistence goes through a small non-blocking `ThemeStore` trait you can implement over any database, including one that opens after the window; `MemoryStore`, `JsonDirStore` and an eframe-storage store are included. The window title and id are configurable.
 - **Control kit, title bar and logger (optional).** Painted buttons, toggles, fields, list rows, meters, section headers and a glass card; a custom window title bar with caption buttons, drag and resize edges; an in-app log viewer. Icons are caller-provided, so any icon crate works.
 - **Chrome for companion crates.** `egui_dock` styling, `egui-data-table` selection colors, `egui-toast` notifications.
 - **Frosted glass.** Real GPU backdrop blur behind floating surfaces, with a kill switch and a flat-fill fallback.
@@ -190,6 +190,10 @@ Caveats:
 - **Kill switch.** Three consecutive failed frames disable frosting for the process; `glass::disable(reason)` and `glass::reenable()` do it by hand.
 - **Opt out.** `--no-frost` on the command line or `EGUI_THEME_KIT_NO_FROST=1` in the environment turns frosting off for the run.
 
+`frost_open_windows` covers windows and popups. A popup, menu, combo list or tooltip (a small `Foreground` or `Tooltip` surface) frosts on a layer glued directly beneath it, so it blurs everything under it, windows included. When the blur cannot run (no GL backend, `--no-frost`, the kill switch) that layer is filled opaque from `Tokens::window` instead, so text underneath never shows through a translucent glass fill. A surface that covers most of the viewport is a veil, not a popup, and keeps the window treatment. `cargo run -p egui-theme-kit --example glass_popups -- --preset frost` shows a menu, a combo list and a tooltip over dense text.
+
+![Popups over window text, before and after, with and without the blur](docs/images/glass-popups.png)
+
 ## Custom title bar
 
 The `title-bar` feature draws the window's top strip inside egui, so every app can share one title bar: a mark, your own controls (a menu bar goes in the left slot, status in the right), the title, minimize / maximize / close buttons, a drag area and resize edges. The user can switch back to the system title bar at any time, live or with a flag.
@@ -263,15 +267,42 @@ egui_theme_kit::cli::install(options);
 `init` applies the first available theme from:
 
 1. the `--theme` file (or `EGUI_THEME_KIT_THEME`),
-2. the active theme of `KitConfig::store`,
-3. the theme saved in eframe storage,
+2. the pinned startup theme, else the active theme, of `KitConfig::store`, when that store is ready,
+3. the theme saved in eframe storage (also under `KitConfig::legacy_storage_key` names),
 4. `KitConfig::default_theme`,
 5. the preset named by `KitConfig::default_preset`,
 6. the shipped default.
 
-`egui_theme_kit::save(ctx, storage)` from `App::save` writes the live theme to eframe storage. It writes nothing while the theme came from a `--theme` file, and clears the entry while the theme equals the configured default, so a later change of the default reaches users who never customized.
+`egui_theme_kit::save(ctx, storage)` from `App::save` writes the live theme to eframe storage and removes the entries of `legacy_storage_key` names. It writes nothing while the theme came from a `--theme` file, and clears the entry while the theme equals the default of the context, so a later change of the default reaches users who never customized.
 
-`KitConfig::store` takes an `Arc<dyn ThemeStore>`: any backend that can return and record the active theme, such as a database table. The store is read at startup, and `egui_theme_kit::startup::store(ctx)` hands it to UI code that saves themes.
+### The default theme
+
+`KitConfig::default_theme` (or `default_preset`) is the one place the default is configured. Everything that asks "is this the default?" reads it from the context: `save`, `store::AutoSave`, the picker's reset, the debug panel's "Reset to default" and the startup fallback. Ask the same question yourself with `persist::default_theme_in(ctx)` and `persist::is_default_in(ctx, &theme)`. An app whose default is not Graphite therefore keeps Graphite as a real choice: it is saved, not cleared. `persist::set_default_theme` is deprecated; it only feeds `init` when the config names no default.
+
+### Theme stores
+
+`KitConfig::store` takes an `Arc<dyn store::ThemeStore>`: `MemoryStore`, `JsonDirStore`, `EframeStorageStore`, a `CachedStore` over your own `ThemeBackend` (a database), or your own implementation. `startup::store(ctx)` hands the registered store to UI code, and the debug panel's Themes tab uses it without a `set_store` call. A type that wraps a store forwards the whole trait with `delegate_theme_store!(Wrapper, field)`. The old two-method trait is `startup::store_stub::ThemeStore`, deprecated; `KitConfig::legacy_store` adapts one.
+
+**A store that opens later.** A database often opens after the window does. Build the store with `CachedStore::open_lazy(backend)`: it does no I/O at construction, reports `is_ready() == false`, keeps writes made meanwhile (the newest 256) and replays them ahead of the first read. Call `store.reload()` once the database is usable. `ThemeStore::on_change` wakes the UI when the load finishes, and `init` registers a repaint for it, so no glue thread or channel is needed.
+
+```rust
+let store = Arc::new(CachedStore::open_lazy(DbBackend::new(handle)));
+egui_theme_kit::init(cc, KitConfig::new().store(store.clone()));
+// later, when the database and its schema exist:
+store.reload();
+```
+
+`init` also registers a plugin that calls `startup::poll_store(ctx)` at the start of every pass. It compares the store's `revision()` and does nothing unless the store became ready or changed:
+
+| Situation | Result |
+|---|---|
+| the store becomes ready and the live theme is unchanged since init | the pinned startup theme, else the active theme, is applied once (`StorePoll::Applied`); the source becomes `Stored` |
+| the store becomes ready after the user changed the live theme | the user's theme stays; the store receives it through `AutoSave` |
+| the store is ready (at init or later), empty, and the live theme is not the default | the live theme is written to the store (`StorePoll::Seeded` when later) |
+| the active theme changes in the store later (another window, a `reload`) and the live theme has no unsaved edits | the new theme is applied |
+| the run started from `--theme` | nothing is applied or written, ever |
+
+Applying a theme inside a pass discards that pass, so no widget draws once in the old style. `startup::theme_epoch(ctx)` counts the themes the poll applied. `store::AutoSave` and the picker watch it, so a theme taken from the store is adopted as already saved and not written back. `startup::attach_store(ctx, store)` registers a store created after `init`, and `startup::adopt_live_theme(ctx)` marks a theme you applied right after `init` (a migration, say) as the startup theme. `CachedStore::flush_within(timeout)` bounds the wait for queued writes when the app exits.
 
 ## Migrating from an app-local copy
 
@@ -280,6 +311,11 @@ egui_theme_kit::cli::install(options);
 - Temp-data ids use the `egui_theme_kit.` prefix and the environment variables are `EGUI_THEME_KIT_*`; theme files written by an app-local copy still load.
 - Widget class names changed with the prefix; use the `widget_theme::PRIMARY`, `DANGER`, `GHOST`, `PROMINENT` and `STOCK` constants rather than the strings.
 - The data-table, dock and toast helpers are behind features; enable the ones you used.
+- Implement `store::ThemeStore` once. The two-method trait the first release carried is deprecated (`startup::store_stub`, `KitConfig::legacy_store`); a database-backed store uses `CachedStore::open_lazy` and needs no readiness glue (see "Theme stores").
+- Replace `persist::set_default_theme`, `persist::default_theme()` and `persist::is_embedded_default` with `KitConfig::default_theme`, `persist::default_theme_in(ctx)` and `persist::is_default_in(ctx, &theme)`; `resolve` and `resolve_with_store` have `_in(ctx, ...)` forms.
+- An earlier release's eframe storage key goes into `KitConfig::legacy_storage_key`; `save` removes it once the theme is written.
+- The picker window takes its title and id from `PickerOptions::title` and `PickerOptions::window_id`.
+- An icon module with its own `Icon`, widgets and table generator moves onto `egui-icon-pack`; [its MIGRATION.md](crates/egui-icon-pack/MIGRATION.md) lists the API differences and the generator options that keep existing image keys.
 
 ## Development
 

@@ -57,10 +57,13 @@
 //! # Startup theme
 //!
 //! [`init`] applies the first available of: the `--theme` file (or the `EGUI_THEME_KIT_THEME`
-//! variable), the store's active theme, the theme saved in eframe storage,
-//! [`KitConfig::default_theme`], [`KitConfig::default_preset`], then the shipped default. [`save`]
-//! writes the live theme back to eframe storage and skips the write while the theme equals the
-//! configured default or came from a `--theme` file.
+//! variable), the pinned or active theme of [`KitConfig::store`] once the store is ready, the theme
+//! saved in eframe storage, [`KitConfig::default_theme`], [`KitConfig::default_preset`], then the
+//! shipped default. A store that opens later is handled by [`startup::poll_store`], which `init`
+//! runs every pass: it applies the store's theme when the store becomes ready (unless the user already
+//! changed the theme) and again when the store's active theme changes elsewhere; a `--theme` file theme is
+//! never replaced. [`save`] writes the live theme back to eframe storage and skips the write while the
+//! theme equals the default of the context or came from a `--theme` file.
 //!
 //! # Cargo features
 //!

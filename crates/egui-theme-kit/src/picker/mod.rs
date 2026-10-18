@@ -7,8 +7,8 @@
 //!
 //! ```ignore
 //! let store = std::sync::Arc::new(JsonDirStore::open(dir)?);
-//! persist::apply_startup_from_store(&ctx, &*store, None);
-//! let mut picker = PickerState::default();
+//! egui_theme_kit::init(cc, KitConfig::new().store(store.clone()));
+//! let mut picker = PickerState::new(PickerOptions::default().with_title("Appearance"));
 //!
 //! // Every frame, in a panel or a window.
 //! picker::show(ui, &mut picker, &*store);

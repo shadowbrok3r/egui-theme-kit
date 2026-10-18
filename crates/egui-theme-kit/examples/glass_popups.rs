@@ -3,7 +3,8 @@
 use eframe::egui::{self, CentralPanel, ComboBox, Context, Ui, Window};
 use egui_theme_kit::{KitConfig, glass};
 
-const LINE: &str = "The quick brown fox jumps over the lazy dog while the five boxing wizards jump quickly";
+const LINE: &str =
+    "The quick brown fox jumps over the lazy dog while the five boxing wizards jump quickly";
 
 struct App {
     mode: usize,

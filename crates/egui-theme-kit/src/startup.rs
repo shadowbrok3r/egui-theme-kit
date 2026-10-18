@@ -288,7 +288,7 @@ fn install_store(ctx: &Context, store: Arc<dyn ThemeStore>, applied: bool) {
         store.on_change(Arc::new(move || repaint.request_repaint()));
     }
     let live = SavedTheme::current(ctx);
-    let sync = sync::SyncState::attached(&*store, live, applied);
+    let sync = sync::SyncState::attached(ctx, &*store, live, applied);
     let attached = ctx.with_plugin::<KitState, _>(|state| {
         state.store = Some(Arc::clone(&store));
         state.sync = sync.clone();
@@ -703,6 +703,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_ready_empty_store_receives_the_theme_restored_from_eframe_storage() {
+        let [preset, ..] = others();
+        let mut storage = MemStorage::default();
+        let json = theme_to_json(&preset_theme(preset, Density::Regular)).unwrap();
+        storage.set_string(persist::STORAGE_KEY, String::from_utf8(json).unwrap());
+        let store = Arc::new(store_with(None));
+        let ctx = Context::default();
+        init_context(
+            &ctx,
+            Some(&storage),
+            KitConfig::new().parse_cli(false).store(store.clone()),
+        );
+        assert_eq!(installed_preset(&ctx), preset);
+        assert_eq!(preset_of(store.load_active().expect("seeded")), preset);
+
+        let plain = Arc::new(store_with(None));
+        init_context(
+            &Context::default(),
+            None,
+            KitConfig::new().parse_cli(false).store(plain.clone()),
+        );
+        assert!(
+            plain.load_active().is_none(),
+            "the default theme is not written"
+        );
+    }
+
+    #[test]
     fn the_store_theme_is_applied_and_reachable_from_the_context() {
         let [preset, ..] = others();
         let store = Arc::new(store_with(Some(preset_theme(preset, Density::Regular))));
@@ -792,7 +820,10 @@ pub(crate) mod tests {
         apply_saved_theme(&ctx, persist::default_theme_in(&ctx));
         assert_eq!(installed_preset(&ctx), app_default);
         autosave.update(&ctx, &*store);
-        assert!(store.load_active().is_none(), "the app default clears the entry");
+        assert!(
+            store.load_active().is_none(),
+            "the app default clears the entry"
+        );
         super::super::save(&ctx, &mut storage);
         assert_eq!(storage.get_string(persist::STORAGE_KEY), None);
         assert!(!themes_equal(&back, &SavedTheme::current(&ctx)));

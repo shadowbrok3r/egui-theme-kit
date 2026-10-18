@@ -248,7 +248,9 @@ fn frost_popup_with(
         UiBuilder::new().layer_id(backdrop).max_rect(rect),
     );
     ui.set_clip_rect(rect);
-    if frost_gated(&ui, rect, params, |ui, rect, params| enqueue(ui, rect, params)) {
+    if frost_gated(&ui, rect, params, |ui, rect, params| {
+        enqueue(ui, rect, params)
+    }) {
         return true;
     }
     let radius = ctx.global_style().visuals.menu_corner_radius;
@@ -1131,7 +1133,11 @@ mod tests {
                 let (paint, popup) = settle(&ctx, Some(kind), &unfrosted);
                 let popup = popup.unwrap_or_else(|| panic!("{} {kind:?}: no popup", def.id));
                 let under = text_under(&paint, popup);
-                assert!(!under.is_empty(), "{} {kind:?}: nothing under the popup", def.id);
+                assert!(
+                    !under.is_empty(),
+                    "{} {kind:?}: nothing under the popup",
+                    def.id
+                );
 
                 let base = Tokens::get(&ctx).window;
                 assert_eq!(base.a(), 255);
@@ -1142,7 +1148,11 @@ mod tests {
                     .map(|(index, _)| *index)
                     .unwrap_or_else(|| panic!("{} {kind:?}: no opaque base in {fills:?}", def.id));
                 let fill_at = fills.last().map(|(index, _)| *index).unwrap();
-                assert!(base_at < fill_at, "{} {kind:?}: base under the popup fill", def.id);
+                assert!(
+                    base_at < fill_at,
+                    "{} {kind:?}: base under the popup fill",
+                    def.id
+                );
                 assert!(
                     under.iter().all(|index| *index < base_at),
                     "{} {kind:?}: text drawn after the base shows through",
@@ -1182,7 +1192,9 @@ mod tests {
         );
         let base = Tokens::get(&ctx).window;
         assert!(
-            !fills_at(&paint, popup).iter().any(|(_, fill)| *fill == base),
+            !fills_at(&paint, popup)
+                .iter()
+                .any(|(_, fill)| *fill == base),
             "a frosted popup needs no opaque base"
         );
         assert_eq!(paint.callbacks.len(), 2, "the window and the popup frost");
@@ -1196,7 +1208,11 @@ mod tests {
         let (paint, popup) = settle(&ctx, Some(PopupKind::Popup), &refuses);
         let popup = popup.expect("a popup is open");
         let base = Tokens::get(&ctx).window;
-        assert!(fills_at(&paint, popup).iter().any(|(_, fill)| *fill == base));
+        assert!(
+            fills_at(&paint, popup)
+                .iter()
+                .any(|(_, fill)| *fill == base)
+        );
         assert!(paint.callbacks.is_empty());
     }
 
@@ -1214,7 +1230,11 @@ mod tests {
         apply_preset(&ctx, flat);
         let (paint, popup) = settle(&ctx, Some(PopupKind::Popup), &unfrosted);
         let popup = popup.expect("a popup is open");
-        assert_eq!(fills_at(&paint, popup).len(), 1, "only the popup's own fill, no backdrop");
+        assert_eq!(
+            fills_at(&paint, popup).len(),
+            1,
+            "only the popup's own fill, no backdrop"
+        );
         assert_eq!(unfrosted(&ctx), 0);
     }
 
@@ -1262,7 +1282,9 @@ mod tests {
             let mut full = scene(&ctx, None, &unfrosted);
             full.textures_delta.clear();
             let paint = painted(&full);
-            gone = !fills_at(&paint, popup).iter().any(|(_, fill)| *fill == base);
+            gone = !fills_at(&paint, popup)
+                .iter()
+                .any(|(_, fill)| *fill == base);
         }
         assert!(gone, "no opaque fill remains where the popup was");
     }

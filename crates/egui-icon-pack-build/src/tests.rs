@@ -361,7 +361,9 @@ fn the_migration_guide_options_keep_an_existing_uri_scheme_and_glyph_source() {
         ..build
     };
     let source = renamed_runtime.render().expect("render").0;
-    assert!(source.contains("pub const CPU: crate::icons::runtime::Icon = crate::icons::runtime::Icon::new("));
+    assert!(source.contains(
+        "pub const CPU: crate::icons::runtime::Icon = crate::icons::runtime::Icon::new("
+    ));
     assert!(source.contains("pub const PACK: crate::icons::runtime::Pack"));
 }
 
