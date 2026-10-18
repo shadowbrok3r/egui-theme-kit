@@ -1,0 +1,15 @@
+[package]
+name = "custom-pack-example"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone package: copy this folder as a template for a new app.
+[workspace]
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+egui-icon-pack = { path = "../..", features = ["phosphor-regular"] }
+
+[build-dependencies]
+egui-icon-pack-build = { path = "../../../egui-icon-pack-build" }

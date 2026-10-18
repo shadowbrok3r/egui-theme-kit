@@ -1,0 +1,33 @@
+[package]
+name = "egui-icon-pack"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SVG icon packs for egui: typed icon constants, tinted and duotone painting, icon widgets, Phosphor font glyphs, a gallery window and an optional bundled Phosphor Regular set."
+readme = "README.md"
+build = "build.rs"
+publish = false
+
+[features]
+default = ["font"]
+# Phosphor icon font: `install_fonts`, the `phosphor` re-export and glyph fallbacks of generated packs.
+font = ["dep:egui-phosphor"]
+# Bundled Phosphor Regular SVG set with duotone layers, in `phosphor_regular`.
+phosphor-regular = ["font", "dep:egui-icon-pack-build"]
+
+[dependencies]
+egui = { version = "0.37", default-features = false }
+egui_extras = { version = "0.37", default-features = false, features = ["svg"] }
+egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-037", default-features = false, features = ["regular"], optional = true }
+
+[build-dependencies]
+egui-icon-pack-build = { path = "../egui-icon-pack-build", optional = true }
+
+[dev-dependencies]
+eframe = { version = "0.37", default-features = false, features = ["x11", "wayland", "default_fonts", "glow"] }
+resvg = { version = "0.45", default-features = false }
+
+[[example]]
+name = "gallery"
+required-features = ["phosphor-regular"]

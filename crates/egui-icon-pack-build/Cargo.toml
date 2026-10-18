@@ -1,0 +1,13 @@
+[package]
+name = "egui-icon-pack-build"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Build-script generator for egui-icon-pack: turns a folder of SVG files into a typed icon table."
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"

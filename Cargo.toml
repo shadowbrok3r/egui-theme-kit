@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/shadowbrok3r/egui-theme-kit"
+
+[workspace.dependencies]
+egui = { version = "0.37", default-features = false }
+eframe = { version = "0.37", default-features = false }
+egui_extras = { version = "0.37", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"

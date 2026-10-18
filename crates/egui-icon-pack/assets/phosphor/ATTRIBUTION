@@ -1,0 +1,13 @@
+Icon assets
+
+regular/*.svg and duo/*.svg are derived from Phosphor Icons,
+@phosphor-icons/core 2.1.1, MIT License, Copyright (c) 2023 Phosphor Icons.
+See LICENSE in this directory.
+https://github.com/phosphor-icons/core
+
+Modifications: fill="currentColor" is replaced with #ffffff so the icons can be
+tinted at paint time. duo/<name>.svg holds only the opacity="0.2" back layer of
+duotone/<name>-duotone.svg, with the opacity attribute removed.
+
+regular/crown-simple.svg carries a data-glyph attribute because the Phosphor
+font has no glyph of that name; its inline-text glyph borrows USER_GEAR.
