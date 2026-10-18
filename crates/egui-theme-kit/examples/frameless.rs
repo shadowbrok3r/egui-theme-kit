@@ -61,6 +61,7 @@ struct App {
     note: String,
     notes_saved: u32,
     save_error: Option<String>,
+    about_open: bool,
 }
 
 impl App {
@@ -72,6 +73,7 @@ impl App {
             note: "Type here".to_owned(),
             notes_saved: 0,
             save_error: None,
+            about_open: false,
         }
     }
 
@@ -109,6 +111,12 @@ impl App {
             controls::menu_separator(ui);
             if controls::menu_item(ui, icons::GEAR, "Theme settings").clicked() {
                 self.picker.open = true;
+            }
+        });
+        // A stock egui menu button sits in the slot the same way.
+        ui.menu_button("Help", |ui| {
+            if ui.button("About").clicked() {
+                self.about_open = true;
             }
         });
     }
@@ -179,6 +187,11 @@ impl eframe::App for App {
         });
         CentralPanel::default().show(ui, |ui| self.content(ui));
         picker::window(&ctx, &mut self.picker, &*self.store);
+        egui::Window::new("About")
+            .open(&mut self.about_open)
+            .show(&ctx, |ui| {
+                ui.label("A window inside the frameless window.");
+            });
         if let Some(error) = chrome::take_save_error(&ctx) {
             self.save_error = Some(format!("Couldn't save the title bar setting: {error}"));
         }

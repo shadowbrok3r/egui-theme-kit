@@ -2,13 +2,12 @@
 
 pub mod windows;
 
+use eframe::egui::emath::GuiRounding as _;
 use eframe::egui::{
     Align, AsIdSalt, Color32, Context, CursorIcon, Event, Frame, Id, LayerId, Layout, Modifiers,
     Order, Panel, Plugin, PointerButton, Pos2, RawInput, Rect, ResizeDirection, Role, Sense,
     Stroke, StrokeKind, TextWrapMode, Ui, UiBuilder, Vec2, ViewportCommand, WidgetInfo, pos2, vec2,
 };
-
-use eframe::egui::emath::GuiRounding as _;
 
 use crate::controls::{
     Icon, Metrics, State, Tokens, icons, kit, medium_font_sized, state_of, text_galley,
@@ -17,7 +16,7 @@ use crate::metrics::type_scale;
 
 /// Width of one caption button.
 pub const CAPTION_W: f32 = 46.0;
-/// Depth of the left, right and bottom resize zones.
+/// Depth of the left, right and bottom resize zones; over empty space a press within egui's interact radius beyond it also resizes.
 pub const EDGE: f32 = 8.0;
 /// Depth of the top resize zone, kept clear of the strip's controls.
 pub const TOP_EDGE: f32 = 5.0;
