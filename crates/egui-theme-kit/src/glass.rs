@@ -980,8 +980,6 @@ mod tests {
         assert_eq!(seen, [true, false]);
     }
 
-    // ---- popups, menus and tooltips -------------------------------------------------------
-
     use super::super::{
         fonts::{self, TextScale},
         presets::{self, apply_preset, builtin_presets},

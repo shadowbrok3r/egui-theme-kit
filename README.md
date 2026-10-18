@@ -313,7 +313,7 @@ Applying a theme inside a pass discards that pass, so no widget draws once in th
 - Temp-data ids use the `egui_theme_kit.` prefix and the environment variables are `EGUI_THEME_KIT_*`; theme files written by an app-local copy still load.
 - Widget class names changed with the prefix; use the `widget_theme::PRIMARY`, `DANGER`, `GHOST`, `PROMINENT` and `STOCK` constants rather than the strings.
 - The data-table, dock and toast helpers are behind features; enable the ones you used.
-- Implement `store::ThemeStore` once. The two-method trait the first release carried is deprecated (`startup::store_stub`, `KitConfig::legacy_store`); a database-backed store uses `CachedStore::open_lazy` and needs no readiness glue (see "Theme stores").
+- Implement `store::ThemeStore` once. `startup::ThemeStore` now is that trait; an `impl` of the two-method form moves to `startup::store_stub::ThemeStore` (deprecated) and goes through `KitConfig::legacy_store`; a database-backed store uses `CachedStore::open_lazy` and needs no readiness glue (see "Theme stores").
 - Replace `persist::set_default_theme`, `persist::default_theme()` and `persist::is_embedded_default` with `KitConfig::default_theme`, `persist::default_theme_in(ctx)` and `persist::is_default_in(ctx, &theme)`; `resolve` and `resolve_with_store` have `_in(ctx, ...)` forms.
 - An earlier release's eframe storage key goes into `KitConfig::legacy_storage_key`; `save` removes it once the theme is written.
 - The picker window takes its title and id from `PickerOptions::title` and `PickerOptions::window_id`.

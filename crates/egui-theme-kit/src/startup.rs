@@ -174,17 +174,12 @@ pub fn init_context(ctx: &Context, storage: Option<&dyn eframe::Storage>, cfg: K
     }
 }
 
-/// Registers `store` after [`init`] and lets [`poll_store`] apply its theme when it is ready.
-///
-/// For apps that build the store after the window opens. The live theme at this moment counts as the
-/// startup theme: a later change by the user is kept over the store's content.
+/// Registers `store` after [`init`]; the live theme counts as the startup theme and [`poll_store`] applies the store's once it is ready.
 pub fn attach_store(ctx: &Context, store: Arc<dyn ThemeStore>) {
     install_store(ctx, store, false);
 }
 
-/// Treats the live theme as the startup theme, so the store's first read does not mistake it for a user change.
-///
-/// Call after applying a theme of your own right after [`init`], such as one migrated from older settings.
+/// Marks the live theme as the startup theme, so the store's first read does not count it as a user change.
 pub fn adopt_live_theme(ctx: &Context) {
     let live = SavedTheme::current(ctx);
     ctx.with_plugin::<KitState, _>(|state| state.sync.synced = Some(live));
