@@ -67,3 +67,6 @@ required-features = ["picker", "files"]
 name = "controls"
 required-features = ["controls", "title-bar", "logger"]
 
+[[example]]
+name = "frameless"
+required-features = ["title-bar", "controls", "files", "picker"]
