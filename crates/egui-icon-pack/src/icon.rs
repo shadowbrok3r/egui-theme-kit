@@ -167,8 +167,10 @@ impl From<Icon> for ImageSource<'static> {
     }
 }
 
-/// Square of a whole number of physical pixels whose origin sits on the pixel grid.
-pub(crate) fn snapped_square(center: Pos2, size: f32, pixels_per_point: f32) -> Rect {
+/// Square of `size` points, rounded to a whole number of physical pixels, centred on `center` with its origin on the pixel grid.
+///
+/// This is how [`Icon::paint`] places an icon; use it to align your own images the same way.
+pub fn snapped_square(center: Pos2, size: f32, pixels_per_point: f32) -> Rect {
     let px = (size * pixels_per_point).round().max(1.0);
     let min =
         (center.to_vec2() * pixels_per_point - Vec2::splat(px * 0.5)).round() / pixels_per_point;

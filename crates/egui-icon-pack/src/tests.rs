@@ -200,7 +200,7 @@ fn registry_merges_sorted_and_earlier_packs_win() {
 fn snapped_square_is_pixel_exact() {
     for ppp in [1.0, 1.25, 1.5, 2.0] {
         for x in [10.0, 10.3, 10.5, 10.77] {
-            let r = crate::icon::snapped_square(Pos2::new(x, x + 0.2), 16.0, ppp);
+            let r = crate::snapped_square(Pos2::new(x, x + 0.2), 16.0, ppp);
             let px = r.size() * ppp;
             assert!((px.x - (16.0 * ppp).round()).abs() < 1e-3);
             assert!(((r.min.x * ppp) - (r.min.x * ppp).round()).abs() < 1e-3);
@@ -275,6 +275,28 @@ fn gallery_draws_a_pack_without_panicking() {
     }
     gallery::toggle(&ctx);
     assert!(!gallery::is_open(&ctx));
+}
+
+#[test]
+fn the_registered_pack_is_drawn_without_passing_it_again() {
+    let ctx = installed();
+    assert!(gallery::pack(&ctx).is_none());
+    let mut output = ctx.run_ui(Default::default(), |ui| {
+        gallery::show_pack_window(ui.ctx());
+        gallery::show_pack(ui);
+    });
+    output.textures_delta.clear();
+
+    gallery::set_pack(&ctx, SAMPLE_PACK);
+    assert_eq!(gallery::pack(&ctx).map(Pack::len), Some(SAMPLE.len()));
+    gallery::set_open(&ctx, true);
+    for _ in 0..2 {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            gallery::show_pack_window(ui.ctx());
+            gallery::show_pack(ui);
+        });
+        output.textures_delta.clear();
+    }
 }
 
 #[test]

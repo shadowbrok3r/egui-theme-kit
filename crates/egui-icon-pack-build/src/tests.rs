@@ -334,6 +334,38 @@ fn runtime_and_glyph_paths_are_configurable() {
 }
 
 #[test]
+fn the_migration_guide_options_keep_an_existing_uri_scheme_and_glyph_source() {
+    let fx = Fixture::new(&[
+        ("regular/cpu.svg", WHITE_FILL),
+        ("regular/acme-logo.svg", &custom_svg("STAR")),
+        ("duo/cpu.svg", WHITE_FILL),
+    ]);
+    let build = IconPackBuild {
+        uri_prefix: "acme-icons".into(),
+        custom_prefix: Some("acme-".into()),
+        glyph_path: Some("egui_phosphor::regular".into()),
+        view_box: None,
+        ..fx.build()
+    };
+    let (source, summary) = build.render().expect("render");
+    assert!(source.contains("\"bytes://acme-icons/cpu.svg\""));
+    assert!(source.contains("\"bytes://acme-icons/duo/cpu.svg\""));
+    assert!(source.contains("egui_phosphor::regular::CPU,"));
+    assert!(source.contains("egui_phosphor::regular::STAR,"));
+    assert!(source.contains("pub const BORROWED: &[&str] = &[\n    \"acme-logo\",\n];"));
+    assert_eq!((summary.icons, summary.custom, summary.with_duo), (2, 1, 1));
+
+    let renamed_runtime = IconPackBuild {
+        runtime_path: "crate::icons::runtime".into(),
+        glyph_path: Some("egui_phosphor::regular".into()),
+        ..build
+    };
+    let source = renamed_runtime.render().expect("render").0;
+    assert!(source.contains("pub const CPU: crate::icons::runtime::Icon = crate::icons::runtime::Icon::new("));
+    assert!(source.contains("pub const PACK: crate::icons::runtime::Pack"));
+}
+
+#[test]
 fn uri_prefix_is_normalized_and_validated() {
     let fx = Fixture::new(&[("regular/cpu.svg", WHITE_FILL)]);
     let build = IconPackBuild {

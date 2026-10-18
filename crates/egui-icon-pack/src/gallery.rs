@@ -5,10 +5,11 @@ use egui::{
     Stroke, StrokeKind, Ui, Window, pos2, vec2,
 };
 
-use crate::{Icon, IconPack, widgets};
+use crate::{Icon, IconPack, Pack, widgets};
 
 const OPEN_ID: &str = "egui_icon_pack.gallery.open";
 const STATE_ID: &str = "egui_icon_pack.gallery.state";
+const PACK_ID: &str = "egui_icon_pack.gallery.pack";
 const SIZE_CONTROL_WIDTH: f32 = 210.0;
 const STRESS_SIZES: [f32; 7] = [12.0, 16.0, 20.0, 24.0, 32.0, 48.0, 64.0];
 const DARK_BG: Color32 = Color32::from_rgb(27, 27, 31);
@@ -80,6 +81,33 @@ pub fn set_open(ctx: &Context, open: bool) {
 /// Flips the gallery window.
 pub fn toggle(ctx: &Context) {
     set_open(ctx, !is_open(ctx));
+}
+
+/// Registers the pack that [`show_pack`] and [`show_pack_window`] draw, for apps with a single pack.
+pub fn set_pack(ctx: &Context, pack: Pack) {
+    ctx.data_mut(|d| d.insert_temp(Id::unique(PACK_ID), pack));
+}
+
+/// The pack registered with [`set_pack`].
+pub fn pack(ctx: &Context) -> Option<Pack> {
+    ctx.data(|d| d.get_temp::<Pack>(Id::unique(PACK_ID)))
+}
+
+/// [`show_window`] for the pack registered with [`set_pack`]; draws nothing when none is registered.
+pub fn show_pack_window(ctx: &Context) {
+    if let Some(pack) = pack(ctx) {
+        show_window(ctx, &pack);
+    }
+}
+
+/// [`show`] for the pack registered with [`set_pack`]; says so when none is registered.
+pub fn show_pack(ui: &mut Ui) {
+    match pack(ui.ctx()) {
+        Some(pack) => show(ui, &pack),
+        None => {
+            ui.label("No icon pack registered; call gallery::set_pack.");
+        }
+    }
 }
 
 /// Draws the gallery window for `pack` when open; call once per frame.

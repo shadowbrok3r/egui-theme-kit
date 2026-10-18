@@ -3,11 +3,12 @@
 //! - [`Icon`]: a white SVG, optional duotone back layer and a Phosphor font glyph, painted tinted and pixel-snapped.
 //! - [`IconPack`], [`Pack`], [`IconRegistry`]: lookup by name and glyph over generated tables.
 //! - [`widgets`]: buttons, labels, toggles and menu entries with leading icons that follow the active theme.
-//! - [`gallery`]: searchable debug window for any pack.
+//! - [`gallery`]: searchable debug window for any pack, or for the one registered with [`gallery::set_pack`].
 //! - [`install`] and [`install_fonts`]: image loaders and the Phosphor font (feature `font`).
 //! - [`phosphor_regular`]: bundled Phosphor Regular set with duotone layers (feature `phosphor-regular`).
 //!
-//! Custom packs are generated from a folder of SVG files by `egui-icon-pack-build`.
+//! Custom packs are generated from a folder of SVG files by `egui-icon-pack-build`. An app that
+//! carried its own copy of this code lists what changes in `MIGRATION.md` next to this crate's `Cargo.toml`.
 //!
 //! # Setup
 //!
@@ -49,7 +50,7 @@ mod tests;
 pub use egui_phosphor as phosphor;
 #[cfg(feature = "font")]
 pub use fonts::{FONT_KEY, icon, icon_colored, icon_sized, install_fonts};
-pub use icon::Icon;
+pub use icon::{Icon, snapped_square};
 pub use pack::{IconPack, IconRegistry, Pack};
 pub use widgets::IconSize;
 

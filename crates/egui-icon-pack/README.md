@@ -51,13 +51,18 @@ egui_icon_pack::gallery::toggle(ctx);                  // bind to a debug menu e
 ```
 
 `gallery::show(ui, &pack)` draws the same contents into any `Ui`. It works for any `IconPack`:
-search, size, tint, duotone, backdrops, widget samples, a detail pane and a stress mode.
+search, size, tint, duotone, backdrops, widget samples, a detail pane and a stress mode. An app with
+one pack registers it once with `gallery::set_pack(ctx, PACK)` and calls `gallery::show_pack_window(ctx)`
+and `gallery::show_pack(ui)` without the argument.
 
 ```text
 cargo run -p egui-icon-pack --example gallery --features phosphor-regular
 ```
 
 ## Your own icon pack
+
+An app that already has its own icon table, widgets and gallery code finds the API differences, the
+matching `IconPackBuild` options and a checklist in [MIGRATION.md](MIGRATION.md).
 
 Folder layout:
 

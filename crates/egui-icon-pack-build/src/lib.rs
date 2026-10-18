@@ -22,6 +22,13 @@
 //!   Phosphor font constant used when the icon is shown as inline text.
 //! - A duo layer holds only the soft back shapes; it is painted under the front layer.
 //!
+//! # Replacing an existing generator
+//!
+//! `uri_prefix`, `duo_dir`, `custom_prefix`, `glyph_path`, `runtime_path` and `view_box` let the
+//! generated table keep the image keys, glyph source and file conventions of a hand-written one.
+//! The options and the API changes of the runtime crate are listed in `MIGRATION.md` in the
+//! `egui-icon-pack` crate.
+//!
 //! # Usage
 //!
 //! ```no_run
