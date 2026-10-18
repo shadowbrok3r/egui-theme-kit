@@ -30,7 +30,7 @@ mod transfer;
 
 use eframe::egui::{Context, Id, RichText, ScrollArea, Ui, Window, vec2};
 
-pub use state::{Message, MessageKind, Origin, PickerOptions, PickerState};
+pub use state::{DEFAULT_TITLE, Message, MessageKind, Origin, PickerOptions, PickerState};
 
 use crate::{fonts::RichTextExt as _, store::ThemeStore};
 
@@ -83,8 +83,12 @@ pub fn window(ctx: &Context, state: &mut PickerState, store: &dyn ThemeStore) {
         return;
     }
     let mut open = true;
-    Window::new("Theme settings")
-        .id(Id::unique("egui_theme_kit.picker.window"))
+    let id = state
+        .options
+        .window_id
+        .unwrap_or_else(|| Id::unique("egui_theme_kit.picker.window"));
+    Window::new(state.options.title)
+        .id(id)
         .open(&mut open)
         .default_size(vec2(660.0, 740.0))
         .show(ctx, |ui| show(ui, state, store));

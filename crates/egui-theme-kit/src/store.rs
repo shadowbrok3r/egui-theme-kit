@@ -40,10 +40,27 @@
 //! let (theme, source) = egui_theme_kit::persist::resolve_with_store(&*store, None);
 //! ```
 //!
+//! # Opening the database later
+//!
+//! [`CachedStore::open`] reads the backend on the calling thread. When the database opens after
+//! the window does, use [`CachedStore::open_lazy`] instead: it does no I/O at construction, keeps
+//! writes made in the meantime in memory, and becomes ready (see [`ThemeStore::is_ready`]) when
+//! [`CachedStore::reload`] first reads the backend successfully. Held writes are replayed first, so
+//! a theme chosen before the database connected is not lost. Register the store in
+//! [`KitConfig::store`](crate::KitConfig::store) and the kit applies the stored theme once the
+//! store is ready; [`ThemeStore::on_change`] wakes the UI so no glue thread is needed.
+//!
+//! ```ignore
+//! let store = Arc::new(CachedStore::open_lazy(DbBackend::new(handle.clone())));
+//! egui_theme_kit::init(cc, KitConfig::new().store(store.clone()));
+//! // Later, once the database is open and its schema exists:
+//! store.reload();
+//! ```
+//!
 //! Apps that persist through `eframe` storage use [`EframeStorageStore`] instead.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -56,6 +73,7 @@ use super::{
     persist::{self, ThemeSource},
     presets,
     saved::{SavedTheme, SemanticColors, theme_from_json, theme_to_json},
+    startup,
 };
 
 /// Longest theme name, in characters.
@@ -151,7 +169,22 @@ pub trait ThemeStore: Send + Sync {
         None
     }
     fn clear_error(&self) {}
+    /// Whether the store has read its backing data; a store that is not ready reports nothing stored.
+    ///
+    /// The kit applies the stored theme and the startup pin once, when this first returns true.
+    fn is_ready(&self) -> bool {
+        true
+    }
+    /// Registers `callback` to run, on whichever thread made the change, each time [`ThemeStore::revision`] increases.
+    ///
+    /// Stores that never change on their own may ignore it.
+    fn on_change(&self, callback: ChangeCallback) {
+        let _ = callback;
+    }
 }
+
+/// A callback a store runs after its visible state changes; it must be cheap and must not call back into the store.
+pub type ChangeCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// A change to the stored state, in the form a backend applies.
 #[derive(Clone, Debug)]
@@ -291,22 +324,42 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The state and revision counter every store shares.
+/// The state, revision counter, readiness flag and change listeners every store shares.
 struct Cache {
     state: Mutex<State>,
     revision: AtomicU64,
+    ready: AtomicBool,
+    listeners: Mutex<Vec<ChangeCallback>>,
 }
 
 impl Cache {
     fn new(state: State) -> Self {
+        Self::with_ready(state, true)
+    }
+
+    fn with_ready(state: State, ready: bool) -> Self {
         Self {
             state: Mutex::new(state),
             revision: AtomicU64::new(1),
+            ready: AtomicBool::new(ready),
+            listeners: Mutex::new(Vec::new()),
         }
     }
 
     fn bump(&self) {
         self.revision.fetch_add(1, Ordering::AcqRel);
+        let listeners = lock(&self.listeners).clone();
+        for listener in listeners {
+            listener();
+        }
+    }
+
+    fn listen(&self, callback: ChangeCallback) {
+        lock(&self.listeners).push(callback);
+    }
+
+    fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
     }
 
     /// Applies `op` to the cache; records a failure as the last error and returns the ops to forward.
@@ -328,13 +381,16 @@ impl Cache {
         self.bump();
     }
 
+    /// Replaces the state with a fresh read and marks the store ready.
     fn replace(&self, snapshot: StoreSnapshot) {
         *lock(&self.state) = State::from_snapshot(snapshot);
+        self.ready.store(true, Ordering::Release);
         self.bump();
     }
 
     fn clear_error(&self) {
-        if lock(&self.state).error.take().is_some() {
+        let had_error = lock(&self.state).error.take().is_some();
+        if had_error {
             self.bump();
         }
     }
@@ -365,6 +421,14 @@ macro_rules! cache_reads {
 
         fn clear_error(&self) {
             self.cache.clear_error();
+        }
+
+        fn is_ready(&self) -> bool {
+            self.cache.is_ready()
+        }
+
+        fn on_change(&self, callback: ChangeCallback) {
+            self.cache.listen(callback);
         }
     };
 }
@@ -450,6 +514,9 @@ struct Shared {
     pending: AtomicUsize,
 }
 
+/// Most writes a lazily opened store keeps while its backend has never been read.
+const HELD_CAP: usize = 256;
+
 /// A [`ThemeStore`] over a [`ThemeBackend`]: a cache for the UI thread and a worker thread for the backend.
 pub struct CachedStore {
     shared: Arc<Shared>,
@@ -459,21 +526,41 @@ pub struct CachedStore {
 
 impl CachedStore {
     /// Loads `backend` on the calling thread, then serves reads from the cache and writes through a worker.
+    ///
+    /// A failed read is reported through [`ThemeStore::last_error`] and leaves the store not ready until
+    /// a later [`CachedStore::reload`] succeeds.
     pub fn open(mut backend: impl ThemeBackend) -> Self {
-        let mut state = State::default();
-        match backend.load() {
-            Ok(snapshot) => state = State::from_snapshot(snapshot),
-            Err(message) => state.error = Some(message),
-        }
+        let (state, ready) = match backend.load() {
+            Ok(snapshot) => (State::from_snapshot(snapshot), true),
+            Err(message) => (
+                State {
+                    error: Some(message),
+                    ..State::default()
+                },
+                false,
+            ),
+        };
+        Self::spawn(backend, state, ready, false)
+    }
+
+    /// Serves an empty cache at once and reads `backend` only on [`CachedStore::reload`], never on the calling thread.
+    ///
+    /// The store is not ready until the first successful reload. Writes made before then update the cache and
+    /// are held in memory (the newest 256), then replayed to the backend ahead of that first read's result.
+    pub fn open_lazy(backend: impl ThemeBackend) -> Self {
+        Self::spawn(backend, State::default(), false, true)
+    }
+
+    fn spawn(backend: impl ThemeBackend, state: State, ready: bool, lazy: bool) -> Self {
         let shared = Arc::new(Shared {
-            cache: Cache::new(state),
+            cache: Cache::with_ready(state, ready),
             pending: AtomicUsize::new(0),
         });
         let (tx, rx) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
         let worker = std::thread::Builder::new()
             .name("theme-store".to_owned())
-            .spawn(move || run_worker(backend, rx, worker_shared))
+            .spawn(move || run_worker(backend, rx, worker_shared, lazy))
             .map_err(|e| log::error!("theme store worker did not start: {e}"))
             .ok();
         Self {
@@ -501,17 +588,24 @@ impl CachedStore {
         }
     }
 
-    /// Re-reads the backend in the background and refreshes the cache once its queue is empty.
+    /// Re-reads the backend on the worker thread and replaces the cache once no local write is waiting.
+    ///
+    /// Returns at once. The cache changes, [`ThemeStore::revision`] increases and the change callbacks run
+    /// when the read finishes; a failed read only sets [`ThemeStore::last_error`]. This is also what makes a
+    /// store from [`CachedStore::open_lazy`] ready.
     pub fn reload(&self) {
         self.send(Msg::Reload);
     }
 
-    /// Blocks until every queued write has reached the backend.
+    /// Blocks until every queued write has reached the backend, for at most 30 seconds.
     pub fn flush(&self) {
+        self.flush_within(Duration::from_secs(30));
+    }
+
+    /// [`CachedStore::flush`] bounded by `timeout`; returns whether the queue drained in time.
+    pub fn flush_within(&self, timeout: Duration) -> bool {
         let (done_tx, done_rx) = mpsc::channel();
-        if self.send(Msg::Flush(done_tx)) {
-            let _ = done_rx.recv_timeout(Duration::from_secs(30));
-        }
+        self.send(Msg::Flush(done_tx)) && done_rx.recv_timeout(timeout).is_ok()
     }
 }
 
@@ -576,6 +670,14 @@ impl ThemeStore for CachedStore {
     fn clear_error(&self) {
         self.shared.cache.clear_error();
     }
+
+    fn is_ready(&self) -> bool {
+        self.shared.cache.is_ready()
+    }
+
+    fn on_change(&self, callback: ChangeCallback) {
+        self.shared.cache.listen(callback);
+    }
 }
 
 /// Keeps only the last of any run of ops that overwrite the active theme.
@@ -590,35 +692,59 @@ fn coalesce(batch: Vec<StoreOp>) -> Vec<StoreOp> {
     out
 }
 
-fn run_worker(mut backend: impl ThemeBackend, rx: mpsc::Receiver<Msg>, shared: Arc<Shared>) {
+fn run_worker(
+    mut backend: impl ThemeBackend,
+    rx: mpsc::Receiver<Msg>,
+    shared: Arc<Shared>,
+    lazy: bool,
+) {
+    let mut held: Option<Vec<StoreOp>> = lazy.then(Vec::new);
+    let mut retry_reload = false;
     let mut open = true;
     while open {
-        let Ok(first) = rx.recv() else {
-            break;
-        };
-        let mut msgs = vec![first];
-        msgs.extend(rx.try_iter());
+        let mut msgs = Vec::new();
+        if retry_reload {
+            msgs.extend(rx.try_iter());
+            if msgs.is_empty() {
+                std::thread::yield_now();
+            }
+        } else {
+            let Ok(first) = rx.recv() else {
+                break;
+            };
+            msgs.push(first);
+            msgs.extend(rx.try_iter());
+        }
 
         let mut ops = Vec::new();
         let mut control = Vec::new();
         for msg in msgs {
             match msg {
                 Msg::Op(op) => ops.push(*op),
-                other => control.push((ops.len(), other)),
+                other => control.push(other),
             }
         }
         let count = ops.len();
         let ops = coalesce(ops);
-        for op in &ops {
-            if let Err(message) = backend.apply(op) {
-                log::warn!("theme store: {message}");
-                shared.cache.set_error(message);
+        match held.as_mut() {
+            Some(held) => {
+                let mut merged = coalesce(std::mem::take(held).into_iter().chain(ops).collect());
+                let excess = merged.len().saturating_sub(HELD_CAP);
+                merged.drain(..excess);
+                *held = merged;
             }
+            None => apply_all(&mut backend, &shared, &ops),
         }
         shared.pending.fetch_sub(count, Ordering::AcqRel);
-        for (_, msg) in control {
+
+        let retrying = retry_reload;
+        let mut reloaded = false;
+        for msg in control {
             match msg {
-                Msg::Reload => reload_cache(&mut backend, &shared),
+                Msg::Reload => {
+                    reloaded = true;
+                    retry_reload = !reload_cache(&mut backend, &shared, &mut held);
+                }
                 Msg::Flush(done) => {
                     let _ = done.send(());
                 }
@@ -626,16 +752,49 @@ fn run_worker(mut backend: impl ThemeBackend, rx: mpsc::Receiver<Msg>, shared: A
                 Msg::Op(_) => {}
             }
         }
+        if retrying && !reloaded && open {
+            retry_reload = !reload_cache(&mut backend, &shared, &mut held);
+        }
     }
 }
 
-fn reload_cache(backend: &mut impl ThemeBackend, shared: &Shared) {
-    match backend.load() {
-        Ok(snapshot) if shared.pending.load(Ordering::Acquire) == 0 => {
-            shared.cache.replace(snapshot);
+fn apply_all(backend: &mut impl ThemeBackend, shared: &Shared, ops: &[StoreOp]) {
+    for op in ops {
+        if let Err(message) = backend.apply(op) {
+            log::warn!("theme store: {message}");
+            shared.cache.set_error(message);
         }
-        Ok(_) => {}
-        Err(message) => shared.cache.set_error(message),
+    }
+}
+
+/// Reads the backend into the cache; false when a local write arrived meanwhile and the read must be repeated.
+fn reload_cache(
+    backend: &mut impl ThemeBackend,
+    shared: &Shared,
+    held: &mut Option<Vec<StoreOp>>,
+) -> bool {
+    let mut snapshot = match backend.load() {
+        Ok(snapshot) => snapshot,
+        Err(message) => {
+            shared.cache.set_error(message);
+            return true;
+        }
+    };
+    if let Some(ops) = held.take() {
+        let ops = coalesce(ops);
+        if !ops.is_empty() {
+            apply_all(backend, shared, &ops);
+            match backend.load() {
+                Ok(fresh) => snapshot = fresh,
+                Err(message) => shared.cache.set_error(message),
+            }
+        }
+    }
+    if shared.pending.load(Ordering::Acquire) == 0 {
+        shared.cache.replace(snapshot);
+        true
+    } else {
+        false
     }
 }
 
@@ -671,7 +830,7 @@ impl Envelope {
     }
 }
 
-/// A [`ThemeStore`] over eframe's key-value storage: read once at startup, written by [`EframeStorageStore::save_to`].
+/// A [`ThemeStore`] over eframe's key-value storage: read once at startup, written by [`EframeStorageStore::save_in`].
 pub struct EframeStorageStore {
     cache: Cache,
 }
@@ -709,11 +868,23 @@ impl EframeStorageStore {
         }
     }
 
-    /// Writes the cache to `storage`; the active entry is removed while it equals the default theme.
+    /// Writes the cache to `storage`; the active entry is removed while it equals the process-wide default theme.
+    #[deprecated(note = "use `save_in`, which compares with the config default of the context")]
     pub fn save_to(&self, storage: &mut dyn eframe::Storage) {
+        self.write(storage, &|theme| {
+            presets::themes_equal(theme, &persist::shipped_default())
+        });
+    }
+
+    /// Writes the cache to `storage`; the active entry is removed while it equals the default theme of `ctx`.
+    pub fn save_in(&self, ctx: &Context, storage: &mut dyn eframe::Storage) {
+        self.write(storage, &|theme| persist::is_default_in(ctx, theme));
+    }
+
+    fn write(&self, storage: &mut dyn eframe::Storage, is_default: &dyn Fn(&SavedTheme) -> bool) {
         let state = lock(&self.cache.state);
         match &state.active {
-            Some(active) if !persist::is_embedded_default(active) => match theme_to_json(active) {
+            Some(active) if !is_default(active) => match theme_to_json(active) {
                 Ok(json) => storage.set_string(
                     persist::STORAGE_KEY,
                     String::from_utf8_lossy(&json).into_owned(),
@@ -818,6 +989,11 @@ mod dir {
             self.inner.flush();
         }
 
+        /// [`Self::flush`] bounded by `timeout`; returns whether every write reached the disk in time.
+        pub fn flush_within(&self, timeout: std::time::Duration) -> bool {
+            self.inner.flush_within(timeout)
+        }
+
         /// Re-reads the directory in the background.
         pub fn reload(&self) {
             self.inner.reload();
@@ -844,6 +1020,8 @@ mod dir {
             revision() -> u64;
             last_error() -> Option<String>;
             clear_error();
+            is_ready() -> bool;
+            on_change(callback: ChangeCallback);
         }
     }
 
@@ -1092,10 +1270,14 @@ impl Fingerprint {
 }
 
 /// Saves the live theme to a [`ThemeStore`] a short while after it last changed.
+///
+/// A theme that [`startup::poll_store`](crate::startup::poll_store) applied from the store is adopted
+/// as already saved. The theme equal to the context's default clears the stored entry instead of writing it.
 pub struct AutoSave {
     debounce: Duration,
     seen: Option<Fingerprint>,
     changed_at: Option<Instant>,
+    epoch: Option<u64>,
 }
 
 impl Default for AutoSave {
@@ -1110,6 +1292,7 @@ impl AutoSave {
             debounce,
             seen: None,
             changed_at: None,
+            epoch: None,
         }
     }
 
@@ -1117,6 +1300,7 @@ impl AutoSave {
     pub fn mark_clean(&mut self, ctx: &Context) {
         self.seen = Some(Fingerprint::of(ctx));
         self.changed_at = None;
+        self.epoch = Some(startup::theme_epoch(ctx));
     }
 
     /// Whether a change is waiting for its debounce to elapse.
@@ -1126,6 +1310,11 @@ impl AutoSave {
 
     /// Notes changes to the live theme and saves once it has been still for the debounce; call every frame.
     pub fn update(&mut self, ctx: &Context, store: &dyn ThemeStore) {
+        let epoch = startup::theme_epoch(ctx);
+        if self.epoch.is_some_and(|seen| seen != epoch) {
+            self.mark_clean(ctx);
+        }
+        self.epoch = Some(epoch);
         let now = Fingerprint::of(ctx);
         match &self.seen {
             None => self.seen = Some(now),
@@ -1159,7 +1348,7 @@ impl AutoSave {
             return;
         }
         let current = SavedTheme::current(ctx);
-        if persist::is_embedded_default(&current) {
+        if persist::is_default_in(ctx, &current) {
             store.clear_active();
         } else {
             store.save_active(&current);
@@ -1192,6 +1381,49 @@ pub(crate) fn test_dir(tag: &str) -> TestDir {
     let dir = std::env::temp_dir().join(format!("egui_theme_kit_{tag}_{}_{n}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create the test directory");
     TestDir(dir)
+}
+
+/// Shared fixtures for tests of code that sits on a store.
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+
+    /// A backend over shared memory; tests edit `rows` as another writer would and count or fail loads.
+    #[derive(Clone, Default)]
+    pub(crate) struct SharedBackend {
+        pub rows: Arc<Mutex<StoreSnapshot>>,
+        pub loads: Arc<AtomicUsize>,
+        pub offline: Arc<AtomicBool>,
+    }
+
+    impl ThemeBackend for SharedBackend {
+        fn load(&mut self) -> Result<StoreSnapshot, String> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            if self.offline.load(Ordering::SeqCst) {
+                return Err("offline".to_owned());
+            }
+            Ok(lock(&self.rows).clone())
+        }
+
+        fn apply(&mut self, op: &StoreOp) -> Result<(), String> {
+            let mut rows = lock(&self.rows);
+            let mut state = State::from_snapshot(rows.clone());
+            state.apply(op.clone())?;
+            *rows = StoreSnapshot {
+                active: state.active,
+                user_themes: state.user,
+                startup: state.startup,
+                warnings: Vec::new(),
+            };
+            Ok(())
+        }
+    }
+
+    /// Reads the backend of a lazily opened store and waits for the worker to finish.
+    pub(crate) fn connect(store: &CachedStore) {
+        store.reload();
+        store.flush();
+    }
 }
 
 #[cfg(test)]
@@ -1239,11 +1471,18 @@ mod tests {
         let nebula = preset_theme(PresetStyles::Nebula);
         let noir = preset_theme(PresetStyles::Noir);
         let start = store.revision();
+        assert!(store.is_ready());
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&wakes);
+        store.on_change(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
 
         assert!(store.load_active().is_none());
         store.save_active(&nebula);
         assert_eq!(recognised(&store.load_active().unwrap()), Some("nebula"));
         assert!(store.revision() > start);
+        assert!(wakes.load(Ordering::SeqCst) > 0, "a write runs the change callbacks");
 
         store.save_user_theme("  Late   Night ", &noir);
         store.save_user_theme("alpha", &nebula);
@@ -1563,6 +1802,151 @@ mod tests {
         assert_eq!(store.user_themes().len(), 1);
     }
 
+    /// Waits up to two seconds for `done` to hold.
+    fn eventually(done: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        done()
+    }
+
+    #[test]
+    fn a_lazy_store_reads_nothing_until_it_is_reloaded() {
+        use super::testing::{SharedBackend, connect};
+
+        let backend = SharedBackend::default();
+        backend.rows.lock().unwrap().active = Some(preset_theme(PresetStyles::Nebula));
+        let store = CachedStore::open_lazy(backend.clone());
+        assert!(!store.is_ready());
+        assert!(store.load_active().is_none());
+        assert_eq!(backend.loads.load(Ordering::SeqCst), 0);
+
+        let before = store.revision();
+        connect(&store);
+        assert!(store.is_ready());
+        assert!(store.revision() > before);
+        assert_eq!(recognised(&store.load_active().unwrap()), Some("nebula"));
+        assert_eq!(backend.loads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_lazy_store_holds_its_newest_writes_and_replays_them_before_the_first_read_lands() {
+        use super::testing::{SharedBackend, connect};
+
+        let backend = SharedBackend::default();
+        let store = CachedStore::open_lazy(backend.clone());
+        for i in 0..300 {
+            store.save_user_theme(&format!("theme {i:03}"), &graphite_theme());
+        }
+        store.save_active(&preset_theme(PresetStyles::Noir));
+        store.save_active(&preset_theme(PresetStyles::Nebula));
+        store.flush();
+        assert!(backend.rows.lock().unwrap().user_themes.is_empty());
+        assert_eq!(store.user_themes().len(), 300, "the cache shows every write");
+
+        connect(&store);
+        let rows = backend.rows.lock().unwrap().clone();
+        assert_eq!(rows.user_themes.len(), 255, "the newest 256 writes are kept: 255 themes and the active one");
+        assert_eq!(rows.user_themes[0].name, "theme 045");
+        assert_eq!(recognised(&rows.active.unwrap()), Some("nebula"));
+        assert_eq!(store.user_themes().len(), 255);
+    }
+
+    #[test]
+    fn a_failed_eager_load_leaves_the_store_not_ready_until_a_reload_succeeds() {
+        use super::testing::{SharedBackend, connect};
+
+        let backend = SharedBackend::default();
+        backend.offline.store(true, Ordering::SeqCst);
+        let store = CachedStore::open(backend.clone());
+        assert!(!store.is_ready());
+        assert_eq!(store.last_error().as_deref(), Some("offline"));
+
+        backend.offline.store(false, Ordering::SeqCst);
+        connect(&store);
+        assert!(store.is_ready());
+    }
+
+    #[test]
+    fn a_read_that_overlaps_a_local_write_is_repeated_before_the_store_is_ready() {
+        struct Gated {
+            gate: Option<mpsc::Receiver<()>>,
+            rows: Arc<Mutex<StoreSnapshot>>,
+        }
+
+        impl ThemeBackend for Gated {
+            fn load(&mut self) -> Result<StoreSnapshot, String> {
+                if let Some(gate) = self.gate.take() {
+                    let _ = gate.recv();
+                }
+                Ok(lock(&self.rows).clone())
+            }
+
+            fn apply(&mut self, op: &StoreOp) -> Result<(), String> {
+                if let StoreOp::SaveUser(named) = op {
+                    lock(&self.rows).user_themes.push(named.clone());
+                }
+                Ok(())
+            }
+        }
+
+        let (open_gate, gate) = mpsc::channel();
+        let rows = Arc::new(Mutex::new(StoreSnapshot::default()));
+        let store = CachedStore::open_lazy(Gated {
+            gate: Some(gate),
+            rows: Arc::clone(&rows),
+        });
+        store.reload();
+        store.save_user_theme("Late", &graphite_theme());
+        open_gate.send(()).unwrap();
+        assert!(eventually(|| store.is_ready()));
+        store.flush();
+        assert_eq!(rows.lock().unwrap().user_themes.len(), 1);
+        assert_eq!(store.user_themes().len(), 1);
+    }
+
+    #[test]
+    fn flush_within_gives_up_when_the_backend_is_slow() {
+        struct Slow;
+
+        impl ThemeBackend for Slow {
+            fn load(&mut self) -> Result<StoreSnapshot, String> {
+                Ok(StoreSnapshot::default())
+            }
+
+            fn apply(&mut self, _: &StoreOp) -> Result<(), String> {
+                std::thread::sleep(Duration::from_millis(300));
+                Ok(())
+            }
+        }
+
+        let store = CachedStore::open(Slow);
+        store.save_active(&graphite_theme());
+        assert!(!store.flush_within(Duration::from_millis(10)));
+        assert!(store.flush_within(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn change_callbacks_run_for_loads_and_failed_writes_of_a_cached_store() {
+        use super::testing::{SharedBackend, connect};
+
+        let store = CachedStore::open_lazy(SharedBackend::default());
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&wakes);
+        store.on_change(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+        connect(&store);
+        let after_load = wakes.load(Ordering::SeqCst);
+        assert!(after_load > 0, "the finished load wakes the UI");
+        store.save_user_theme("   ", &graphite_theme());
+        assert!(wakes.load(Ordering::SeqCst) > after_load, "a rejected write is a visible change");
+    }
+
     #[test]
     fn the_eframe_store_round_trips_through_storage_and_removes_the_default_entry() {
         let mut storage = MemStorage::default();
@@ -1570,7 +1954,7 @@ mod tests {
         store.save_active(&preset_theme(PresetStyles::Supernova));
         store.save_user_theme("Mine", &preset_theme(PresetStyles::Rerun));
         store.set_startup(StartupTheme::Preset("noir".to_owned()));
-        store.save_to(&mut storage);
+        store.save_in(&Context::default(), &mut storage);
         assert!(storage.get_string(persist::STORAGE_KEY).is_some());
         assert!(storage.get_string(USER_THEMES_KEY).is_some());
         assert!(storage.get_string(STARTUP_KEY).is_some());
@@ -1583,7 +1967,7 @@ mod tests {
         again.save_active(&graphite_theme());
         again.delete_user_theme("Mine");
         again.set_startup(StartupTheme::LastUsed);
-        again.save_to(&mut storage);
+        again.save_in(&Context::default(), &mut storage);
         assert!(storage.get_string(persist::STORAGE_KEY).is_none());
         assert!(storage.get_string(USER_THEMES_KEY).is_none());
         assert!(storage.get_string(STARTUP_KEY).is_none());

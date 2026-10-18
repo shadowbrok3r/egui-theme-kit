@@ -410,9 +410,9 @@ pub fn group_of(preset: PresetStyles) -> Option<&'static PresetGroup> {
     PRESET_GROUPS.iter().find(|g| g.presets.contains(&preset))
 }
 
-/// Applies the app's default theme: its style, glass material, density and text scale.
+/// Applies the default theme of `ctx` (the config default, else Graphite): its style, glass material, density and text scale.
 pub fn bootstrap_startup_theme(ctx: &Context) {
-    apply_saved_theme(ctx, persist::default_theme());
+    apply_saved_theme(ctx, persist::default_theme_in(ctx));
 }
 
 /// Installs `style` under the current density's metrics overlay and publishes its tokens.

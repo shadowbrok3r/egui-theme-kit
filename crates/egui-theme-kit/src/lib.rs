@@ -195,11 +195,9 @@ pub fn dock_style(ctx: &Context) -> egui_dock::Style {
 }
 
 /// Writes the live theme to eframe storage; call from `eframe::App::save`.
+///
+/// Nothing is written while the theme came from a `--theme` file, and the entry is removed while the
+/// theme equals the default of the context (see [`persist::default_theme_in`]).
 pub fn save(ctx: &Context, storage: &mut dyn eframe::Storage) {
-    let from_file = matches!(persist::source(ctx), persist::ThemeSource::File(_));
-    if !from_file && startup::is_configured_default(ctx, &SavedTheme::current(ctx)) {
-        storage.remove_string(persist::STORAGE_KEY);
-        return;
-    }
     persist::save(ctx, storage);
 }

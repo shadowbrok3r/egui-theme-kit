@@ -226,7 +226,7 @@ pub fn dump_with(options: &Options, fonts: &FontConfig) -> anyhow::Result<String
     let ctx = Context::default();
     fonts::set_config(&ctx, fonts.clone());
     fonts::install_for_context(&ctx);
-    let (theme, source) = persist::resolve(None, options.theme_path.as_deref());
+    let (theme, source) = persist::resolve_in(&ctx, None, options.theme_path.as_deref());
     apply_saved_theme(&ctx, theme);
     persist::set_source(&ctx, source);
     ctx.run_ui(Default::default(), |_| {})

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use eframe::egui::Context;
+use eframe::egui::{Context, Id};
 
 use super::edit::{self, Role, Semantic, Surface};
 use super::io::{self, DialogResult};
@@ -14,6 +14,7 @@ use crate::{
     metrics::Density,
     presets::{self, PresetRef, themes_equal},
     saved::{SavedTheme, SemanticColors, theme_from_json},
+    startup,
     store::{AutoSave, Fingerprint, NamedTheme, StartupTheme, ThemeStore, clean_name},
     tokens::Tokens,
 };
@@ -49,6 +50,10 @@ pub struct Message {
 /// How the picker is dressed and which sections it shows.
 #[derive(Clone, Copy)]
 pub struct PickerOptions {
+    /// Title of the window drawn by [`super::window`].
+    pub title: &'static str,
+    /// Id of the window drawn by [`super::window`]; `None` uses a kit-wide id. Set one per picker when several windows can exist.
+    pub window_id: Option<Id>,
     /// Maps an action name to a glyph drawn before its label; names are listed in [`super::ICON_NAMES`].
     pub icon: Option<fn(&str) -> Option<&'static str>>,
     /// Whether the Customize section is shown.
@@ -62,11 +67,30 @@ pub struct PickerOptions {
 impl Default for PickerOptions {
     fn default() -> Self {
         Self {
+            title: DEFAULT_TITLE,
+            window_id: None,
             icon: None,
             customize: true,
             import_export: true,
             debounce: Duration::from_millis(600),
         }
+    }
+}
+
+/// Title of the picker window unless [`PickerOptions::title`] says otherwise.
+pub const DEFAULT_TITLE: &str = "Theme settings";
+
+impl PickerOptions {
+    /// These options with the window title `title`.
+    pub fn with_title(mut self, title: &'static str) -> Self {
+        self.title = title;
+        self
+    }
+
+    /// These options with the window id `id`.
+    pub fn with_window_id(mut self, id: Id) -> Self {
+        self.window_id = Some(id);
+        self
     }
 }
 
@@ -102,6 +126,7 @@ pub struct PickerState {
     pub(super) message: Option<Message>,
     pub(super) json: String,
     pub(super) autosave: AutoSave,
+    theme_epoch: u64,
     pub(super) inbox: Arc<Mutex<Vec<DialogResult>>>,
     pub(super) live: Option<Live>,
     pub(super) users: Vec<NamedTheme>,
@@ -127,6 +152,7 @@ impl Default for PickerState {
             message: None,
             json: String::new(),
             autosave: AutoSave::new(options.debounce),
+            theme_epoch: 0,
             inbox: Arc::default(),
             live: None,
             users: Vec::new(),
@@ -195,6 +221,12 @@ impl PickerState {
     /// Refreshes the cached lists and the modified marker; call once per frame before drawing.
     pub fn sync(&mut self, ctx: &Context, store: &dyn ThemeStore) {
         self.drain_inbox(ctx);
+        let epoch = startup::theme_epoch(ctx);
+        if epoch != self.theme_epoch {
+            self.theme_epoch = epoch;
+            self.origin = None;
+            self.live = None;
+        }
         let revision = store.revision();
         if self.users_revision != Some(revision) {
             self.users = store.user_themes();

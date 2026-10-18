@@ -193,15 +193,18 @@ fn store_id() -> Id {
     Id::unique("egui_theme_kit.panel.store")
 }
 
-/// Sets the store the Themes tab saves to; without one the tab keeps themes in memory only.
+/// Sets the store the Themes tab saves to, overriding the one registered with `KitConfig::store`; with neither the tab keeps themes in memory only.
 pub fn set_store(ctx: &Context, store: Arc<dyn ThemeStore>) {
     ctx.data_mut(|d| d.insert_temp(store_id(), store));
 }
 
-/// The store set by [`set_store`], or an in-memory one created on first use.
+/// The store set by [`set_store`], else the one registered with `KitConfig::store`, else an in-memory one created on first use.
 #[cfg(any(feature = "picker", test))]
 fn store(ctx: &Context) -> Arc<dyn ThemeStore> {
     if let Some(store) = ctx.data(|d| d.get_temp::<Arc<dyn ThemeStore>>(store_id())) {
+        return store;
+    }
+    if let Some(store) = super::startup::store(ctx) {
         return store;
     }
     let store: Arc<dyn ThemeStore> = Arc::new(super::store::MemoryStore::default());
@@ -371,7 +374,7 @@ fn presets_section(ui: &mut Ui, ctx: &Context) {
             .on_hover_text("Apply the default theme with its density, text size and glass.")
             .clicked()
         {
-            apply_saved_theme(ctx, persist::default_theme());
+            apply_saved_theme(ctx, persist::default_theme_in(ctx));
         }
     });
 
@@ -1082,6 +1085,25 @@ mod tests {
         set_store(&ctx, Arc::clone(&custom));
         assert!(Arc::ptr_eq(&custom, &store(&ctx)));
         assert!(!Arc::ptr_eq(&first, &store(&ctx)));
+    }
+
+    #[test]
+    fn the_store_registered_at_init_backs_the_panel_until_set_store_overrides_it() {
+        let registered: Arc<dyn ThemeStore> = Arc::new(MemoryStore::default());
+        let ctx = Context::default();
+        crate::startup::init_context(
+            &ctx,
+            None,
+            crate::KitConfig::new()
+                .parse_cli(false)
+                .store(Arc::clone(&registered)),
+        );
+        ctx.memory_mut(|mem| *mem = Default::default());
+        assert!(Arc::ptr_eq(&registered, &store(&ctx)));
+
+        let custom: Arc<dyn ThemeStore> = Arc::new(MemoryStore::default());
+        set_store(&ctx, Arc::clone(&custom));
+        assert!(Arc::ptr_eq(&custom, &store(&ctx)));
     }
 
     #[cfg(feature = "picker")]

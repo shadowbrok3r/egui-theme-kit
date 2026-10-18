@@ -1,4 +1,9 @@
 //! Startup theme resolution and persistence in eframe storage.
+//!
+//! The default theme of a context is the one its [`KitConfig`](crate::KitConfig) resolved at init
+//! (`default_theme`, else `default_preset`); every decision about "is this the default" goes through
+//! [`default_theme_in`] and [`is_default_in`]. The context-free functions remain for code that runs
+//! without a context and only know the deprecated process-wide default.
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -8,6 +13,7 @@ use eframe::egui::{Context, Id};
 use super::{
     presets::{self, themes_equal},
     saved::{SavedTheme, theme_from_json, theme_to_json},
+    startup,
     store::{StartupTheme, ThemeStore},
     theme_chrome::graphite_theme,
 };
@@ -17,27 +23,46 @@ pub const STORAGE_KEY: &str = "egui_theme_kit.theme.v1";
 
 static DEFAULT_THEME: RwLock<Option<SavedTheme>> = RwLock::new(None);
 
-/// Replaces the theme applied when nothing is saved; call before bootstrapping.
+/// Replaces the process-wide fallback default theme; read once by [`init`](crate::init) when the config names no default.
+#[deprecated(note = "set `KitConfig::default_theme` or `KitConfig::default_preset`; this process-wide value only feeds `init` when the config names no default")]
 pub fn set_default_theme(theme: SavedTheme) {
     if let Ok(mut slot) = DEFAULT_THEME.write() {
         *slot = Some(theme);
     }
 }
 
-/// Restores the Graphite theme as the default.
+/// Clears the process-wide fallback default theme set by [`set_default_theme`].
+#[deprecated(note = "see `set_default_theme`")]
 pub fn reset_default_theme() {
     if let Ok(mut slot) = DEFAULT_THEME.write() {
         *slot = None;
     }
 }
 
-/// The theme applied when nothing is saved: the app's default, else Graphite.
+/// The process-wide default set by the deprecated [`set_default_theme`], if any.
+pub(crate) fn global_default() -> Option<SavedTheme> {
+    DEFAULT_THEME.read().ok().and_then(|slot| slot.clone())
+}
+
+/// The theme applied when nothing is saved and no context config exists: the process-wide default, else Graphite.
+pub(crate) fn shipped_default() -> SavedTheme {
+    global_default().unwrap_or_else(graphite_theme)
+}
+
+/// The process-wide default theme, else Graphite; it knows nothing of the context config.
+#[deprecated(note = "use `default_theme_in`, which honours `KitConfig::default_theme` and `default_preset`")]
 pub fn default_theme() -> SavedTheme {
-    DEFAULT_THEME
-        .read()
-        .ok()
-        .and_then(|slot| slot.clone())
-        .unwrap_or_else(graphite_theme)
+    shipped_default()
+}
+
+/// The theme applied when nothing is saved: the config default of `ctx`, else the shipped default (Graphite).
+pub fn default_theme_in(ctx: &Context) -> SavedTheme {
+    startup::default_theme(ctx).unwrap_or_else(shipped_default)
+}
+
+/// Whether `theme` equals [`default_theme_in`] in every part.
+pub fn is_default_in(ctx: &Context, theme: &SavedTheme) -> bool {
+    themes_equal(theme, &default_theme_in(ctx))
 }
 
 /// Where the theme applied at startup came from.
@@ -106,25 +131,49 @@ pub fn load_stored_from(
     })
 }
 
-/// The theme to apply at startup: the `--theme` file, else the stored theme, else the default.
+/// The theme to apply at startup: the `--theme` file, else the stored theme, else the process-wide default.
+#[deprecated(note = "use `resolve_in`, which falls back to the config default of the context")]
 pub fn resolve(
     storage: Option<&dyn eframe::Storage>,
     file: Option<&Path>,
 ) -> (SavedTheme, ThemeSource) {
-    resolve_from(file, || load_stored(storage))
+    resolve_from(shipped_default(), file, || load_stored(storage))
 }
 
-/// The theme to apply at startup from a [`ThemeStore`]: the `--theme` file, the pinned startup theme, the active theme, else the default.
+/// [`resolve`] with the config default of `ctx` as the fallback.
+pub fn resolve_in(
+    ctx: &Context,
+    storage: Option<&dyn eframe::Storage>,
+    file: Option<&Path>,
+) -> (SavedTheme, ThemeSource) {
+    resolve_from(default_theme_in(ctx), file, || load_stored(storage))
+}
+
+/// The theme to apply at startup from a [`ThemeStore`]: the `--theme` file, the pinned startup theme, the active theme, else the process-wide default.
+#[deprecated(note = "use `resolve_with_store_in`, which falls back to the config default of the context")]
 pub fn resolve_with_store(
     store: &dyn ThemeStore,
     file: Option<&Path>,
 ) -> (SavedTheme, ThemeSource) {
-    resolve_from(file, || {
-        startup_theme(store).or_else(|| store.load_active())
-    })
+    resolve_from(shipped_default(), file, || store_theme(store))
+}
+
+/// [`resolve_with_store`] with the config default of `ctx` as the fallback.
+pub fn resolve_with_store_in(
+    ctx: &Context,
+    store: &dyn ThemeStore,
+    file: Option<&Path>,
+) -> (SavedTheme, ThemeSource) {
+    resolve_from(default_theme_in(ctx), file, || store_theme(store))
+}
+
+/// The pinned startup theme of `store`, else its active theme.
+pub(crate) fn store_theme(store: &dyn ThemeStore) -> Option<SavedTheme> {
+    startup_theme(store).or_else(|| store.load_active())
 }
 
 fn resolve_from(
+    default: SavedTheme,
     file: Option<&Path>,
     stored: impl FnOnce() -> Option<SavedTheme>,
 ) -> (SavedTheme, ThemeSource) {
@@ -139,7 +188,7 @@ fn resolve_from(
     }
     match stored() {
         Some(theme) => (theme, ThemeSource::Stored),
-        None => (default_theme(), ThemeSource::Embedded),
+        None => (default, ThemeSource::Embedded),
     }
 }
 
@@ -169,30 +218,42 @@ pub fn apply_startup_from_store(
     store: &dyn ThemeStore,
     file: Option<&Path>,
 ) -> ThemeSource {
-    let (theme, source) = resolve_with_store(store, file);
+    let (theme, source) = resolve_with_store_in(ctx, store, file);
     set_source(ctx, source.clone());
     presets::apply_saved_theme(ctx, theme);
     source
 }
 
-/// Whether `theme` equals the default theme in every part.
+/// Whether `theme` equals the process-wide default theme in every part.
+#[deprecated(note = "use `is_default_in`, which compares with the config default of the context")]
 pub fn is_embedded_default(theme: &SavedTheme) -> bool {
-    themes_equal(theme, &default_theme())
+    themes_equal(theme, &shipped_default())
 }
 
-/// Writes the live theme to `storage`, or removes the entry when it equals the default theme.
+/// Writes the live theme to `storage`, or removes the entry when it equals [`default_theme_in`].
+///
+/// Nothing is written while the theme came from a `--theme` file. Keys registered with
+/// [`KitConfig::legacy_storage_key`](crate::KitConfig::legacy_storage_key) are removed once the theme is written.
 pub fn save(ctx: &Context, storage: &mut dyn eframe::Storage) {
     if matches!(source(ctx), ThemeSource::File(_)) {
         return;
     }
     let current = SavedTheme::current(ctx);
-    if is_embedded_default(&current) {
+    if is_default_in(ctx, &current) {
         storage.remove_string(STORAGE_KEY);
-        return;
+    } else {
+        match theme_to_json(&current) {
+            Ok(json) => {
+                storage.set_string(STORAGE_KEY, String::from_utf8_lossy(&json).into_owned());
+            }
+            Err(e) => {
+                log::warn!("theme was not saved: {e}");
+                return;
+            }
+        }
     }
-    match theme_to_json(&current) {
-        Ok(json) => storage.set_string(STORAGE_KEY, String::from_utf8_lossy(&json).into_owned()),
-        Err(e) => log::warn!("theme was not saved: {e}"),
+    for key in startup::legacy_storage_keys(ctx) {
+        storage.remove_string(&key);
     }
 }
 
@@ -229,10 +290,10 @@ mod tests {
     #[test]
     fn nothing_stored_resolves_to_the_embedded_default() {
         let storage = MemStorage::default();
-        let (theme, source) = resolve(Some(&storage), None);
+        let (theme, source) = resolve_in(&Context::default(), Some(&storage), None);
         assert_eq!(source, ThemeSource::Embedded);
-        assert!(is_embedded_default(&theme));
-        let (_, source) = resolve(None, None);
+        assert!(is_default_in(&Context::default(), &theme));
+        let (_, source) = resolve_in(&Context::default(), None, None);
         assert_eq!(source, ThemeSource::Embedded);
     }
 
@@ -244,7 +305,7 @@ mod tests {
         storage.set_string(STORAGE_KEY, "stale".to_owned());
         save(&ctx, &mut storage);
         assert_eq!(storage.get_string(STORAGE_KEY), None);
-        assert_eq!(resolve(Some(&storage), None).1, ThemeSource::Embedded);
+        assert_eq!(resolve_in(&Context::default(), Some(&storage), None).1, ThemeSource::Embedded);
     }
 
     #[test]
@@ -256,7 +317,7 @@ mod tests {
         let mut storage = MemStorage::default();
         save(&ctx, &mut storage);
 
-        let (theme, source) = resolve(Some(&storage), None);
+        let (theme, source) = resolve_in(&Context::default(), Some(&storage), None);
         assert_eq!(source, ThemeSource::Stored);
         assert_eq!(theme.density, Density::Comfortable);
 
@@ -269,9 +330,9 @@ mod tests {
     fn a_corrupt_entry_falls_back_to_the_embedded_default() {
         let mut storage = MemStorage::default();
         storage.set_string(STORAGE_KEY, "{ definitely not json".to_owned());
-        let (theme, source) = resolve(Some(&storage), None);
+        let (theme, source) = resolve_in(&Context::default(), Some(&storage), None);
         assert_eq!(source, ThemeSource::Embedded);
-        assert!(is_embedded_default(&theme));
+        assert!(is_default_in(&Context::default(), &theme));
     }
 
     #[test]
@@ -316,7 +377,7 @@ mod tests {
         apply_preset(&ctx, PresetStyles::Noir);
         std::fs::write(&path, theme_to_json(&SavedTheme::current(&ctx)).unwrap()).unwrap();
 
-        let (theme, source) = resolve(None, Some(&path));
+        let (theme, source) = resolve_in(&Context::default(), None, Some(&path));
         assert_eq!(source, ThemeSource::File(path.clone()));
         let fresh = Context::default();
         apply_saved_theme(&fresh, theme);
@@ -326,18 +387,18 @@ mod tests {
         assert!(storage.get_string(STORAGE_KEY).is_none());
 
         let missing = dir.path().join("missing.json");
-        assert_eq!(resolve(None, Some(&missing)).1, ThemeSource::Embedded);
+        assert_eq!(resolve_in(&Context::default(), None, Some(&missing)).1, ThemeSource::Embedded);
     }
 
     #[test]
     fn the_store_resolves_file_then_startup_then_active_then_default() {
         let store = MemoryStore::default();
-        assert_eq!(resolve_with_store(&store, None).1, ThemeSource::Embedded);
+        assert_eq!(resolve_with_store_in(&Context::default(), &store, None).1, ThemeSource::Embedded);
 
         let ctx = Context::default();
         apply_preset(&ctx, PresetStyles::Aurora);
         store.save_active(&SavedTheme::current(&ctx));
-        let (theme, source) = resolve_with_store(&store, None);
+        let (theme, source) = resolve_with_store_in(&Context::default(), &store, None);
         assert_eq!(source, ThemeSource::Stored);
         let fresh = Context::default();
         apply_saved_theme(&fresh, theme);
@@ -346,18 +407,18 @@ mod tests {
         apply_preset(&ctx, PresetStyles::Velvet);
         store.save_user_theme("Mine", &SavedTheme::current(&ctx));
         store.set_startup(StartupTheme::User("mine".to_owned()));
-        let (theme, _) = resolve_with_store(&store, None);
+        let (theme, _) = resolve_with_store_in(&Context::default(), &store, None);
         apply_saved_theme(&fresh, theme);
         assert_eq!(presets::installed_preset(&fresh), PresetStyles::Velvet);
 
         store.set_startup(StartupTheme::Preset("galactic".to_owned()));
-        let (theme, _) = resolve_with_store(&store, None);
+        let (theme, _) = resolve_with_store_in(&Context::default(), &store, None);
         apply_saved_theme(&fresh, theme);
         assert_eq!(presets::installed_preset(&fresh), PresetStyles::Galactic);
 
         store.set_startup(StartupTheme::User("Mine".to_owned()));
         store.delete_user_theme("Mine");
-        let (theme, _) = resolve_with_store(&store, None);
+        let (theme, _) = resolve_with_store_in(&Context::default(), &store, None);
         apply_saved_theme(&fresh, theme);
         assert_eq!(presets::installed_preset(&fresh), PresetStyles::Aurora);
     }

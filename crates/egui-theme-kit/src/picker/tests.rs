@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use eframe::egui::{CentralPanel, Color32, Context, Pos2, RawInput, Rect, vec2};
+use eframe::egui::{CentralPanel, Color32, Context, FullOutput, Id, Pos2, RawInput, Rect, Shape, vec2};
 
 use super::{
     MessageKind, Origin, PickerOptions, PickerState,
@@ -658,4 +658,104 @@ fn glassifying_through_the_picker_is_a_modification() {
     state.reset_to_origin(&ctx);
     assert_eq!(presets::installed_preset_id(&ctx), Some("tokyo-night"));
     assert!(!glass::params(&ctx).is_visible());
+}
+
+fn shape_texts(output: &FullOutput) -> Vec<String> {
+    fn collect(shape: &Shape, out: &mut Vec<String>) {
+        match shape {
+            Shape::Text(text) => out.push(text.galley.text().to_owned()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    output.shapes.iter().for_each(|clipped| collect(&clipped.shape, &mut out));
+    out
+}
+
+/// One frame of the picker window; returns the text it painted.
+fn window_frame(ctx: &Context, state: &mut PickerState, store: &dyn ThemeStore) -> Vec<String> {
+    let input = RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 900.0))),
+        ..Default::default()
+    };
+    let output = ctx.run_ui(input, |ui| window(ui.ctx(), state, store));
+    let texts = shape_texts(&output);
+    output.drop_without_applying_deltas();
+    texts
+}
+
+#[test]
+fn the_window_title_defaults_to_theme_settings_and_can_be_replaced() {
+    assert_eq!(PickerOptions::default().title, super::DEFAULT_TITLE);
+    let ctx = themed_context();
+    let store = MemoryStore::default();
+
+    let mut state = PickerState::default();
+    state.open = true;
+    window_frame(&ctx, &mut state, &store);
+    let texts = window_frame(&ctx, &mut state, &store);
+    assert!(texts.iter().any(|t| t == "Theme settings"), "{texts:?}");
+
+    let mut renamed = PickerState::new(PickerOptions::default().with_title("Appearance"));
+    renamed.open = true;
+    window_frame(&ctx, &mut renamed, &store);
+    let texts = window_frame(&ctx, &mut renamed, &store);
+    assert!(texts.iter().any(|t| t == "Appearance"), "{texts:?}");
+    assert!(!texts.iter().any(|t| t == "Theme settings"), "{texts:?}");
+}
+
+#[test]
+fn the_window_uses_the_caller_id_so_two_pickers_can_coexist() {
+    let ctx = themed_context();
+    let store = MemoryStore::default();
+    let id = Id::unique("app.appearance.window");
+    let default_id = Id::unique("egui_theme_kit.picker.window");
+
+    let mut own = PickerState::new(PickerOptions::default().with_window_id(id));
+    own.open = true;
+    window_frame(&ctx, &mut own, &store);
+    window_frame(&ctx, &mut own, &store);
+    assert!(ctx.memory(|m| m.area_rect(id)).is_some());
+    assert!(ctx.memory(|m| m.area_rect(default_id)).is_none());
+
+    let mut stock = PickerState::default();
+    stock.open = true;
+    window_frame(&ctx, &mut stock, &store);
+    window_frame(&ctx, &mut stock, &store);
+    assert!(ctx.memory(|m| m.area_rect(default_id)).is_some());
+    assert!(ctx.memory(|m| m.area_rect(id)).is_some());
+}
+
+#[test]
+fn a_theme_the_kit_applies_from_the_store_becomes_the_origin_without_a_save() {
+    use crate::{
+        KitConfig,
+        startup::init_context,
+        store::{CachedStore, testing::{SharedBackend, connect}},
+    };
+
+    let backend = SharedBackend::default();
+    let store = std::sync::Arc::new(CachedStore::open_lazy(backend.clone()));
+    let ctx = Context::default();
+    init_context(&ctx, None, KitConfig::new().parse_cli(false).store(store.clone()));
+    let mut state = PickerState::default();
+    run(&ctx, &mut state, &*store);
+    assert_eq!(state.origin(), Some(&Origin::Preset("graphite")));
+
+    backend.rows.lock().unwrap().active = Some(preset_theme_of("nebula"));
+    connect(&store);
+    run(&ctx, &mut state, &*store);
+    assert_eq!(presets::installed_preset_id(&ctx), Some("nebula"));
+    assert_eq!(state.origin(), Some(&Origin::Preset("nebula")));
+    assert!(!state.is_modified());
+
+    let revision = store.revision();
+    run(&ctx, &mut state, &*store);
+    state.flush(&ctx, &*store);
+    assert_eq!(store.revision(), revision, "the applied theme was not written back");
+}
+
+fn preset_theme_of(id: &str) -> SavedTheme {
+    presets::find_preset(id).expect("built in").theme()
 }
