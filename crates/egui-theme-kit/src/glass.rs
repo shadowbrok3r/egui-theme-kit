@@ -2,14 +2,14 @@
 
 use eframe::egui::{
     Align2, Area, AsIdSalt, Color32, Context, CornerRadius, FontId, Frame, Id, InnerResponse,
-    Order, Rect, Response, Sense, StrokeKind, Ui, Vec2, pos2,
+    LayerId, Order, Rect, Response, Sense, StrokeKind, Ui, UiBuilder, Vec2, pos2,
 };
 use serde::{Deserialize, Serialize};
 
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use super::colors;
+use super::{colors, tokens::Tokens};
 
 const PARAMS_KEY: &str = "egui_theme_kit.theme.glass_params";
 
@@ -168,41 +168,96 @@ fn paints(ui: &Ui, rect: Rect) -> bool {
 }
 
 /// Frosts every floating surface open this frame from last frame's area rects; call once per frame from the root `Ui` and get the count.
+///
+/// Windows frost on a layer behind the app content. Popups, menus, combo boxes and tooltips (small
+/// `Foreground` and `Tooltip` surfaces) frost on a layer glued directly beneath each one, so they blur
+/// whatever sits under them, windows included. When the blur cannot run (no GL backend, `--no-frost`,
+/// the kill switch) such a surface gets an opaque fill from [`Tokens::window`] instead, so text beneath
+/// never shows through a translucent glass fill. The returned count is the frosted surfaces.
 pub fn frost_open_windows(ctx: &Context) -> usize {
-    let params = params(ctx);
-    if !params.is_visible() || !is_available() {
-        return 0;
-    }
-    floating_surfaces(ctx)
-        .into_iter()
-        .filter(|(id, rect)| frost_behind_floating(ctx, *id, *rect, params))
-        .count()
+    frost_open_surfaces(ctx, is_available(), &backend::frost)
 }
 
-/// Layer id and last-frame rect of every visible floating surface with a positive rect.
-fn floating_surfaces(ctx: &Context) -> Vec<(Id, Rect)> {
+/// [`frost_open_windows`] over an explicit availability and enqueue function.
+fn frost_open_surfaces(
+    ctx: &Context,
+    available: bool,
+    enqueue: &dyn Fn(&Ui, Rect, GlassParams) -> bool,
+) -> usize {
+    let params = params(ctx);
+    if !params.is_visible() {
+        return 0;
+    }
+    let mut frosted = 0;
+    for (layer, rect) in floating_surfaces(ctx) {
+        let done = if is_popup_like(ctx, layer, rect) {
+            frost_popup_with(ctx, layer, rect, params, enqueue)
+        } else {
+            available
+                && frost_behind_floating_with(ctx, layer.id, rect, params, |ui, rect, params| {
+                    enqueue(ui, rect, params)
+                })
+        };
+        frosted += usize::from(done);
+    }
+    frosted
+}
+
+/// Layer and last-frame rect of every visible floating surface with a positive rect, back to front.
+fn floating_surfaces(ctx: &Context) -> Vec<(LayerId, Rect)> {
     ctx.memory(|m| {
-        m.areas()
-            .visible_layer_ids()
-            .into_iter()
+        m.layer_ids()
             .filter(|layer| {
                 matches!(
                     layer.order,
                     Order::Middle | Order::Foreground | Order::Tooltip
                 )
             })
-            .filter_map(|layer| m.area_rect(layer.id).map(|rect| (layer.id, rect)))
+            .filter(|layer| m.areas().is_visible(layer))
+            .filter_map(|layer| m.area_rect(layer.id).map(|rect| (layer, rect)))
             .filter(|(_, rect)| rect.is_positive())
             .collect()
     })
 }
 
-/// Frosts `rect` on its own `Order::Background` layer so it grabs the app content behind the surface.
-fn frost_behind_floating(ctx: &Context, surface_id: Id, rect: Rect, params: GlassParams) -> bool {
-    frost_behind_floating_with(ctx, surface_id, rect, params, backend::frost)
+/// Salt of the layer a popup-like surface gets directly beneath it.
+const POPUP_BACKDROP: &str = "egui_theme_kit.glass.popup_backdrop";
+
+/// Share of the content area above which a `Foreground` surface is an overlay veil, not a popup.
+const OVERLAY_FRACTION: f32 = 0.85;
+
+/// Whether the surface is a popup, menu, combo list or tooltip rather than a window or a full-screen veil.
+fn is_popup_like(ctx: &Context, layer: LayerId, rect: Rect) -> bool {
+    matches!(layer.order, Order::Foreground | Order::Tooltip)
+        && rect.area() < OVERLAY_FRACTION * ctx.content_rect().area()
 }
 
-/// [`frost_behind_floating`] through [`frost_gated`] with `enqueue`.
+/// Frosts the surface on a layer of its own order glued directly beneath it, or fills that layer opaque when no frost is enqueued.
+fn frost_popup_with(
+    ctx: &Context,
+    surface: LayerId,
+    rect: Rect,
+    params: GlassParams,
+    enqueue: &dyn Fn(&Ui, Rect, GlassParams) -> bool,
+) -> bool {
+    let backdrop = LayerId::new(surface.order, surface.id.with(POPUP_BACKDROP));
+    ctx.set_sublayer(backdrop, surface);
+    let mut ui = Ui::new(
+        ctx.clone(),
+        backdrop.id.with("ui"),
+        UiBuilder::new().layer_id(backdrop).max_rect(rect),
+    );
+    ui.set_clip_rect(rect);
+    if frost_gated(&ui, rect, params, |ui, rect, params| enqueue(ui, rect, params)) {
+        return true;
+    }
+    let radius = ctx.global_style().visuals.menu_corner_radius;
+    ui.painter()
+        .rect_filled(rect, radius, Tokens::get(ctx).window);
+    false
+}
+
+/// Frosts `rect` on its own `Order::Background` layer so it grabs the app content behind the surface, through [`frost_gated`] with `enqueue`.
 fn frost_behind_floating_with(
     ctx: &Context,
     surface_id: Id,
@@ -921,5 +976,294 @@ mod tests {
             full.textures_delta.clear();
         }
         assert_eq!(seen, [true, false]);
+    }
+
+    // ---- popups, menus and tooltips -------------------------------------------------------
+
+    use super::super::{
+        fonts::{self, TextScale},
+        presets::{self, apply_preset, builtin_presets},
+    };
+    use eframe::egui::{CentralPanel, FullOutput, Popup, PopupKind, Window, epaint::RectShape};
+
+    /// What a frame painted, in draw order.
+    #[derive(Default)]
+    struct Painted {
+        /// Text shapes with their index and bounds.
+        texts: Vec<(usize, String, Rect)>,
+        /// Filled rectangles with their index, bounds and fill.
+        rects: Vec<(usize, Rect, Color32)>,
+        /// Paint callbacks with their index and bounds.
+        callbacks: Vec<(usize, Rect)>,
+    }
+
+    fn painted(full: &FullOutput) -> Painted {
+        fn walk(shape: &Shape, index: usize, out: &mut Painted) {
+            match shape {
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, index, out)),
+                Shape::Text(text) => out.texts.push((
+                    index,
+                    text.galley.text().to_owned(),
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                )),
+                Shape::Rect(RectShape { rect, fill, .. }) if *fill != Color32::TRANSPARENT => {
+                    out.rects.push((index, *rect, *fill));
+                }
+                Shape::Callback(callback) => out.callbacks.push((index, callback.rect)),
+                _ => {}
+            }
+        }
+        let mut out = Painted::default();
+        for (index, clipped) in full.shapes.iter().enumerate() {
+            walk(&clipped.shape, index, &mut out);
+        }
+        out
+    }
+
+    fn themed_context() -> Context {
+        let ctx = Context::default();
+        ctx.set_fonts(fonts::definitions(TextScale::Normal));
+        presets::bootstrap_startup_theme(&ctx);
+        ctx
+    }
+
+    /// One frame: app text, a window with text and, when `open`, a popup of `kind` anchored in the window.
+    fn scene(
+        ctx: &Context,
+        open: Option<PopupKind>,
+        frost: &dyn Fn(&Context) -> usize,
+    ) -> FullOutput {
+        ctx.run_ui(input(), |ui| {
+            frost(ui.ctx());
+            CentralPanel::default().show(ui, |ui| {
+                for i in 0..30 {
+                    ui.label(format!("BEHIND panel line {i}"));
+                }
+            });
+            Window::new("host")
+                .fixed_pos(pos2(40.0, 40.0))
+                .show(ui.ctx(), |ui| {
+                    let anchor = ui.button("anchor");
+                    for i in 0..8 {
+                        ui.label(format!("BEHIND window line {i} with extra words"));
+                    }
+                    if let Some(kind) = open {
+                        Popup::from_response(&anchor)
+                            .kind(kind)
+                            .open(true)
+                            .show(|ui| {
+                                ui.label("popup item one");
+                                ui.label("popup item two");
+                            });
+                    }
+                });
+        })
+    }
+
+    /// Runs `frames` frames and returns the last one's paint and the popup's rect.
+    fn settle(
+        ctx: &Context,
+        open: Option<PopupKind>,
+        frost: &dyn Fn(&Context) -> usize,
+    ) -> (Painted, Option<Rect>) {
+        let mut full = scene(ctx, open, frost);
+        for _ in 0..4 {
+            full.textures_delta.clear();
+            full = scene(ctx, open, frost);
+        }
+        full.textures_delta.clear();
+        let popup = ctx.memory(|m| {
+            m.layer_ids()
+                .filter(|l| matches!(l.order, Order::Foreground | Order::Tooltip))
+                .filter(|l| m.areas().is_visible(l))
+                .find_map(|l| m.area_rect(l.id))
+        });
+        (painted(&full), popup)
+    }
+
+    fn near(a: Rect, b: Rect) -> bool {
+        (a.min - b.min).abs().max_elem() < 0.5 && (a.max - b.max).abs().max_elem() < 0.5
+    }
+
+    /// Indices of the filled rectangles that coincide with `popup`, back to front.
+    fn fills_at(painted: &Painted, popup: Rect) -> Vec<(usize, Color32)> {
+        painted
+            .rects
+            .iter()
+            .filter(|(_, rect, _)| near(*rect, popup))
+            .map(|(index, _, fill)| (*index, *fill))
+            .collect()
+    }
+
+    /// Indices of the app text that lies under `popup`.
+    fn text_under(painted: &Painted, popup: Rect) -> Vec<usize> {
+        painted
+            .texts
+            .iter()
+            .filter(|(_, text, rect)| text.starts_with("BEHIND") && rect.intersects(popup))
+            .map(|(index, ..)| *index)
+            .collect()
+    }
+
+    fn unfrosted(ctx: &Context) -> usize {
+        frost_open_surfaces(ctx, false, &|_, _, _| false)
+    }
+
+    fn glass_presets() -> Vec<presets::PresetDef> {
+        builtin_presets()
+            .into_iter()
+            .filter(|def| {
+                let ctx = Context::default();
+                apply_preset(&ctx, *def);
+                params(&ctx).is_visible()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_glass_preset_paints_popups_over_an_opaque_fill_when_the_blur_cannot_run() {
+        let presets = glass_presets();
+        assert!(presets.len() >= 12, "the glass presets are exercised");
+        for def in presets {
+            for kind in [PopupKind::Popup, PopupKind::Menu, PopupKind::Tooltip] {
+                let ctx = themed_context();
+                apply_preset(&ctx, def);
+                let (paint, popup) = settle(&ctx, Some(kind), &unfrosted);
+                let popup = popup.unwrap_or_else(|| panic!("{} {kind:?}: no popup", def.id));
+                let under = text_under(&paint, popup);
+                assert!(!under.is_empty(), "{} {kind:?}: nothing under the popup", def.id);
+
+                let base = Tokens::get(&ctx).window;
+                assert_eq!(base.a(), 255);
+                let fills = fills_at(&paint, popup);
+                let base_at = fills
+                    .iter()
+                    .find(|(_, fill)| *fill == base)
+                    .map(|(index, _)| *index)
+                    .unwrap_or_else(|| panic!("{} {kind:?}: no opaque base in {fills:?}", def.id));
+                let fill_at = fills.last().map(|(index, _)| *index).unwrap();
+                assert!(base_at < fill_at, "{} {kind:?}: base under the popup fill", def.id);
+                assert!(
+                    under.iter().all(|index| *index < base_at),
+                    "{} {kind:?}: text drawn after the base shows through",
+                    def.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_popup_is_frosted_on_a_layer_between_the_windows_and_the_popup() {
+        let stand_in = |ui: &Ui, rect: Rect, _: GlassParams| {
+            add_callback(ui, rect);
+            true
+        };
+        let frosted = |ctx: &Context| frost_open_surfaces(ctx, true, &stand_in);
+        let ctx = themed_context();
+        apply_preset(&ctx, presets::preset("frost").expect("built in"));
+        let (paint, popup) = settle(&ctx, Some(PopupKind::Popup), &frosted);
+        let popup = popup.expect("a popup is open");
+        let fill_at = fills_at(&paint, popup)
+            .last()
+            .map(|(index, _)| *index)
+            .expect("the popup fill");
+        let (frost_at, _) = paint
+            .callbacks
+            .iter()
+            .find(|(_, rect)| near(*rect, popup))
+            .map(|(index, rect)| (*index, *rect))
+            .expect("a frost over the popup");
+        assert!(frost_at < fill_at, "the frost is under the popup fill");
+        let under = text_under(&paint, popup);
+        assert!(!under.is_empty());
+        assert!(
+            under.iter().all(|index| *index < frost_at),
+            "the frost grabs the app and window text beneath the popup"
+        );
+        let base = Tokens::get(&ctx).window;
+        assert!(
+            !fills_at(&paint, popup).iter().any(|(_, fill)| *fill == base),
+            "a frosted popup needs no opaque base"
+        );
+        assert_eq!(paint.callbacks.len(), 2, "the window and the popup frost");
+    }
+
+    #[test]
+    fn a_failed_enqueue_falls_back_to_the_opaque_base() {
+        let ctx = themed_context();
+        apply_preset(&ctx, presets::preset("frost").expect("built in"));
+        let refuses = |ctx: &Context| frost_open_surfaces(ctx, true, &|_, _, _| false);
+        let (paint, popup) = settle(&ctx, Some(PopupKind::Popup), &refuses);
+        let popup = popup.expect("a popup is open");
+        let base = Tokens::get(&ctx).window;
+        assert!(fills_at(&paint, popup).iter().any(|(_, fill)| *fill == base));
+        assert!(paint.callbacks.is_empty());
+    }
+
+    #[test]
+    fn a_preset_without_glass_adds_no_popup_layers() {
+        let flat = builtin_presets()
+            .into_iter()
+            .find(|def| {
+                let ctx = Context::default();
+                apply_preset(&ctx, *def);
+                !params(&ctx).is_visible()
+            })
+            .expect("a preset without glass ships");
+        let ctx = themed_context();
+        apply_preset(&ctx, flat);
+        let (paint, popup) = settle(&ctx, Some(PopupKind::Popup), &unfrosted);
+        let popup = popup.expect("a popup is open");
+        assert_eq!(fills_at(&paint, popup).len(), 1, "only the popup's own fill, no backdrop");
+        assert_eq!(unfrosted(&ctx), 0);
+    }
+
+    #[test]
+    fn a_full_screen_veil_is_not_taken_for_a_popup() {
+        let ctx = themed_context();
+        apply_preset(&ctx, presets::preset("frost").expect("built in"));
+        let veil = |open: bool| {
+            let mut full = ctx.run_ui(input(), |ui| {
+                unfrosted(ui.ctx());
+                if open {
+                    Area::new(Id::unique("test.veil"))
+                        .order(Order::Foreground)
+                        .fixed_pos(pos2(0.0, 0.0))
+                        .show(ui.ctx(), |ui| {
+                            ui.allocate_space(vec2(1280.0, 800.0));
+                        });
+                }
+            });
+            full.textures_delta.clear();
+            painted(&full)
+        };
+        let base = Tokens::get(&ctx).window;
+        for _ in 0..4 {
+            let paint = veil(true);
+            assert!(
+                !paint
+                    .rects
+                    .iter()
+                    .any(|(_, rect, fill)| *fill == base && rect.area() > 1_000_000.0),
+                "the veil stays see-through"
+            );
+        }
+    }
+
+    #[test]
+    fn the_backdrop_of_a_closed_popup_lasts_one_frame() {
+        let ctx = themed_context();
+        apply_preset(&ctx, presets::preset("frost").expect("built in"));
+        let (_, popup) = settle(&ctx, Some(PopupKind::Popup), &unfrosted);
+        let popup = popup.expect("a popup is open");
+        let base = Tokens::get(&ctx).window;
+        let mut gone = false;
+        for _ in 0..3 {
+            let mut full = scene(&ctx, None, &unfrosted);
+            full.textures_delta.clear();
+            let paint = painted(&full);
+            gone = !fills_at(&paint, popup).iter().any(|(_, fill)| *fill == base);
+        }
+        assert!(gone, "no opaque fill remains where the popup was");
     }
 }
