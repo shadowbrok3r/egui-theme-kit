@@ -60,6 +60,10 @@ pub struct PickerOptions {
     pub customize: bool,
     /// Whether the import and export section is shown.
     pub import_export: bool,
+    /// Capability of a host-provided blur renderer, when it does not use eframe.
+    pub glass_available: Option<fn() -> bool>,
+    /// Compact touch layout: inline sizing choices and fewer columns in the color editor.
+    pub compact: bool,
     /// How long the live theme must be still before it is saved to the store.
     pub debounce: Duration,
 }
@@ -72,6 +76,8 @@ impl Default for PickerOptions {
             icon: None,
             customize: true,
             import_export: true,
+            glass_available: None,
+            compact: false,
             debounce: Duration::from_millis(600),
         }
     }

@@ -30,6 +30,7 @@ mod transfer;
 
 use eframe::egui::{Context, Id, RichText, ScrollArea, Ui, Window, vec2};
 
+pub use gallery::PresetGallery;
 pub use state::{DEFAULT_TITLE, Message, MessageKind, Origin, PickerOptions, PickerState};
 
 use crate::{fonts::RichTextExt as _, store::ThemeStore};

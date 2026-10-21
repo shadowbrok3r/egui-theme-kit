@@ -137,6 +137,25 @@ ui.painter().rect_filled(rect, t.radius_md, t.raised);
 
 `presets::apply_preset(ctx, preset)` installs a preset's style, semantic colors and glass material together and keeps the current density and text scale. `presets::apply_saved_theme(ctx, theme)` applies a loaded theme and recognizes which preset it matches.
 
+### Shared desktop and touch appearance
+
+With `picker` enabled, `appearance::ThemeConfig` provides a serializable palette, glass material, control height, text scale and spacing. The same editor works in native Android and desktop hosts. It embeds the Mastertech base style and uses the full picker's searchable preset preview cards; choosing a preset keeps the host's sizing and font preferences.
+
+```rust,ignore
+use egui_theme_kit::appearance::{self, Density, ThemeConfig};
+let mut config = ThemeConfig::default(); // or deserialize the host's saved settings
+config.apply(ctx, Density::Touch);
+// Inside the host's settings scroll area:
+if appearance::editor(ui, &mut config, Density::Touch) {
+    config.apply(ui.ctx(), Density::Touch);
+    // Persist config through the app's own settings.
+}
+```
+
+For a preview browser without a settings editor, retain a `picker::PresetGallery` and call `gallery.show(ui, selected_preset_id)`. It returns the chosen `PresetDef` without changing the live theme; the app applies and saves it. It shares rendering, grouping and search with `picker::show`, and leaves scrolling to its host.
+
+The full picker also supports `PickerOptions::compact` for narrow touch layouts and `glass_available` for a host-provided backdrop renderer. Visual preset recognition ignores host input policy, so changing numeric editing or text-selection behavior does not turn a saved preset into a custom theme.
+
 ### Stock widget theme
 
 `widget_theme` registers a theme for egui's built-in `Button`, `Checkbox`, `TextEdit` and `Separator`, so stock widgets already look right. Classes adjust one widget:

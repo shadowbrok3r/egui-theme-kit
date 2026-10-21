@@ -361,6 +361,7 @@ pub(super) fn glass_interaction() -> Interaction {
         tooltip_grace_time: 0.2,
         selectable_labels: true,
         multi_widget_text_select: true,
+        ..Default::default()
     }
 }
 

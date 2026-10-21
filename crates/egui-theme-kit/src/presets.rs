@@ -557,14 +557,15 @@ pub fn set_installed_preset(ctx: &Context, preset: impl PresetRef) {
     set_installed_id(ctx, preset.resolve().map(|d| d.id));
 }
 
-/// Compares styles ignoring `number_formatter`, whose PartialEq is Arc pointer identity.
+/// Compares visual styles, ignoring host input policy and `number_formatter` identity.
 pub fn styles_visually_equal(a: &Style, b: &Style) -> bool {
     let mut a = a.clone();
     a.number_formatter = b.number_formatter.clone();
+    a.interaction = b.interaction.clone();
     a == *b
 }
 
-/// Whether two saved themes are equal in every part, ignoring `number_formatter` identity.
+/// Whether saved appearance is equal, ignoring host input policy and formatter identity.
 pub fn themes_equal(a: &SavedTheme, b: &SavedTheme) -> bool {
     a.density == b.density
         && a.text_scale == b.text_scale
@@ -1278,5 +1279,21 @@ mod tests {
             assert!(titles.contains(&expected), "missing group {expected}");
         }
         assert_eq!(groups[0].presets[0].id, "graphite");
+    }
+}
+
+#[cfg(test)]
+mod host_input_policy_tests {
+    #[test]
+    fn input_policy_does_not_turn_a_preset_into_a_custom_theme() {
+        for preset in super::builtin_presets() {
+            let mut style = (*preset.style()).clone();
+            style.interaction.selectable_labels = !style.interaction.selectable_labels;
+            style.interaction.tooltip_delay += 1.0;
+            assert_eq!(
+                super::exact_preset(&super::normalized(&style)).map(|p| p.id),
+                Some(preset.id)
+            );
+        }
     }
 }

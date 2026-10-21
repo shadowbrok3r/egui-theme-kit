@@ -82,6 +82,8 @@
 //! With `default-features = false` the core remains: tokens, metrics, fonts, the widget theme,
 //! presets, saved themes and the debug panel.
 
+#[cfg(feature = "picker")]
+pub mod appearance;
 #[cfg(feature = "title-bar")]
 pub mod chrome;
 pub mod cli;
