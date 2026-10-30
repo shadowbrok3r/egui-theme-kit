@@ -25,7 +25,7 @@ A theme and styling system for [egui](https://github.com/emilk/egui) apps, insta
 | `egui-theme-kit` | the theme system described here |
 | [`egui-icon-pack`](crates/egui-icon-pack/README.md) | SVG icon packs: `Icon` painting, widgets, gallery, optional bundled Phosphor Regular set |
 | `egui-icon-pack-build` | `build.rs` generator that turns a folder of SVGs into typed `Icon` constants |
-| `backdrop-blur-*` | vendored GPU backdrop-blur crates used by the `glass` feature |
+| `backdrop-blur-*` | vendored GPU backdrop-blur crates behind the `glass` module |
 
 ## Install
 
@@ -46,7 +46,7 @@ egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev =
 
 | Feature | Default | Adds |
 |---|---|---|
-| `glass` | yes | GPU backdrop blur through a grab-pass backend; enables eframe's `glow` feature |
+| `glass` | yes | enables eframe's `glow` feature so `init` builds the blur backend from `cc.gl` at startup; also builds the backend on iOS and wasm32 |
 | `files` | yes | native import/export dialogs (`rfd`) and the user theme directory (`directories`) |
 | `dock` | yes | `dock_style` for `egui_dock` |
 | `toast` | yes | themed `egui-toast` notifications and the panel's toast tester |
@@ -59,6 +59,8 @@ egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev =
 The defaults match the author's apps, which use every one of these companions. For a smaller dependency tree use `default-features = false` and enable what you need; the core (tokens, metrics, fonts, widget theme, presets, saved themes, debug panel) needs only `egui`, `eframe`, `egui_extras` and a few small crates (`serde`, `serde_json`, `anyhow`, `log`).
 
 `glass` turns on eframe's `glow` feature, which changes the signature of `eframe::App::on_exit`. An app on the wgpu backend should build with `default-features = false`.
+
+The blur backend itself is built on every target except iOS and wasm32, whatever the features: without `glass`, it adopts the GL context of the first glow paint that frosts, so an app on glow gets the blur with `default-features = false` too.
 
 ## Quick start
 
@@ -203,8 +205,9 @@ Surfaces frost when the active theme carries a glass material (`glass::params(ct
 
 Caveats:
 
-- **Glow only.** The backend is a grab-pass over eframe's glow renderer. Under wgpu, or without the `glass` feature, every frost call is a no-op and surfaces paint flat fills.
-- **Needs a GL 3.3 / GLES 3.0 context.** `glass::install(cc)` builds the backend from `cc.gl`; `init` calls it. Software GL works but is slow.
+- **Glow only.** The backend is a grab-pass over eframe's glow renderer. Under wgpu every frost call is a no-op and surfaces paint flat fills.
+- **Needs a GL 3.3 / GLES 3.0 context.** With the `glass` feature `init` builds the backend from `cc.gl`; without it the backend builds itself from the GL context of the first glow paint that frosts. Software GL works but is slow.
+- **Ask why it is off.** `glass::support()` returns `Ready`, `Pending` (not built yet), `NotBuilt` (iOS or wasm32 without `glass`), `NotGlow` (no glow paint ran) or `Unsupported` with the GL error; `glass::status().notice()` is the matching settings note, and only `Unsupported` is reported as a limit of the host.
 - **Wire the frame hooks.** `glass::poll_outcome(ctx)` in `App::logic`, `glass::frost_open_windows(ctx)` at the top of `App::ui`, and `glass::shutdown(gl)` in `App::on_exit`.
 - **Kill switch.** Three consecutive failed frames disable frosting for the process; `glass::disable(reason)` and `glass::reenable()` do it by hand.
 - **Opt out.** `--no-frost` on the command line or `EGUI_THEME_KIT_NO_FROST=1` in the environment turns frosting off for the run.

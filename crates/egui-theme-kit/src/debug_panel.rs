@@ -417,10 +417,11 @@ fn presets_section(ui: &mut Ui, ctx: &Context) {
 fn glass_section(ui: &mut Ui, ctx: &Context) {
     let mut params = glass::params(ctx);
     let before = params;
+    glass::probe(ctx);
     let status = glass::status();
 
     ui.horizontal_wrapped(|ui| {
-        ui.add_enabled_ui(status.backend_installed && !status.disabled, |ui| {
+        ui.add_enabled_ui(status.support.can_frost() && !status.disabled, |ui| {
             ui.checkbox(&mut params.enabled, "Backdrop blur");
         });
         ui.label(RichText::new(format!("frost: {}", status.summary())).weak());
@@ -492,7 +493,7 @@ fn glass_section(ui: &mut Ui, ctx: &Context) {
                 ui.label(value);
                 ui.end_row();
             };
-            row(ui, "GL backend", yes_no(status.backend_installed));
+            row(ui, "GL backend", status.support.label().to_owned());
             row(ui, "Kill switch", yes_no(status.disabled));
             row(ui, "Environment switch", yes_no(status.env_disabled));
             row(

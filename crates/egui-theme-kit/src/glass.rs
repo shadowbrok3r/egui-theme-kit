@@ -1,4 +1,4 @@
-//! Real GPU backdrop blur behind tinted-glass surfaces over `backdrop-blur-egui`'s grab-pass path, degrading to flat fills without GL or the `glass` feature.
+//! Real GPU backdrop blur behind tinted-glass surfaces over `backdrop-blur-egui`'s grab-pass path, degrading to flat fills without a glow renderer.
 
 use eframe::egui::{
     Align2, Area, AsIdSalt, Color32, Context, CornerRadius, FontId, Frame, Id, InnerResponse,
@@ -125,13 +125,31 @@ pub fn backend_installed() -> bool {
     backend::is_available()
 }
 
-/// Builds the grab-pass backend from the host's GL context; returns whether it came up, always false without the `glass` feature.
+/// Whether the GPU blur can run in this process, or why it cannot.
+pub fn support() -> Support {
+    backend::support()
+}
+
+/// [`support`], first asking a pending backend to come up on the next glow paint; call from UI code.
+pub fn probe(ctx: &Context) -> Support {
+    request(ctx);
+    support()
+}
+
+/// Sends the backend's GL probe unless frosting is switched off.
+fn request(ctx: &Context) {
+    if !is_disabled() {
+        backend::request(ctx);
+    }
+}
+
+/// Builds the grab-pass backend from `cc.gl` with the `glass` feature; without it the backend comes up on the first glow paint. Returns whether it is up.
 pub fn install(cc: &eframe::CreationContext<'_>) -> bool {
     backend::install(cc)
 }
 
 /// Frees the backend's GL objects; call from `eframe::App::on_exit` while the context is current. Idempotent.
-#[cfg(feature = "glass")]
+#[cfg(glass_backend)]
 pub fn shutdown(gl: &backdrop_blur_egui::glow::Context) {
     backend::shutdown(gl);
 }
@@ -175,6 +193,9 @@ fn paints(ui: &Ui, rect: Rect) -> bool {
 /// the kill switch) such a surface gets an opaque fill from [`Tokens::window`] instead, so text beneath
 /// never shows through a translucent glass fill. The returned count is the frosted surfaces.
 pub fn frost_open_windows(ctx: &Context) -> usize {
+    if params(ctx).is_visible() {
+        request(ctx);
+    }
     frost_open_surfaces(ctx, is_available(), &backend::frost)
 }
 
@@ -352,10 +373,16 @@ pub fn preview(ui: &mut Ui, params: GlassParams) -> Response {
     );
     let label = if frosted {
         "GPU backdrop blur"
-    } else if is_available() {
-        "blur off - tint only"
+    } else if is_disabled() {
+        "blur switched off"
     } else {
-        "no GPU blur on this host"
+        match support() {
+            Support::Ready => "blur off - tint only",
+            Support::Pending => "starting GPU blur",
+            Support::NotBuilt => "no blur backend in this build",
+            Support::NotGlow => "blur needs the glow renderer",
+            Support::Unsupported(_) => "no GPU blur on this host",
+        }
     };
     painter.text(
         card.center(),
@@ -463,11 +490,50 @@ impl FrostReport {
     }
 }
 
+/// Whether the GPU blur can run in this process, or why it cannot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Support {
+    /// The grab-pass backend is built against the live GL context.
+    Ready,
+    /// Not known yet; the backend comes up on the first glow paint that frosts or probes.
+    Pending,
+    /// No blur backend in this build: iOS or wasm32 without the `glass` feature.
+    NotBuilt,
+    /// No glow paint callback ran, so the renderer is not eframe's glow renderer.
+    NotGlow,
+    /// The GL context failed the backend's requirements, with the backend's error.
+    Unsupported(String),
+}
+
+impl Support {
+    /// Whether frosting runs now or once the backend comes up.
+    pub fn can_frost(&self) -> bool {
+        matches!(self, Self::Ready | Self::Pending)
+    }
+
+    /// Short name of the state.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Pending => "pending",
+            Self::NotBuilt => "not built",
+            Self::NotGlow => "not glow",
+            Self::Unsupported(_) => "unsupported",
+        }
+    }
+}
+
+/// Settings note for a GL context or host renderer that cannot run the blur.
+pub const UNAVAILABLE_NOTICE: &str =
+    "GPU blur is unavailable on this host; the tint still applies.";
+
 /// Snapshot of the frost pipeline for the debug readout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrostStatus {
     /// The grab-pass backend was built against the host GL context.
     pub backend_installed: bool,
+    /// Whether the backend can run here, or why it cannot.
+    pub support: Support,
     /// Frosting is switched off by the environment, `--no-frost`, or the failure guard.
     pub disabled: bool,
     /// The environment switch is set.
@@ -484,8 +550,10 @@ pub struct FrostStatus {
 
 /// The current frost pipeline status.
 pub fn status() -> FrostStatus {
+    let support = backend::support();
     FrostStatus {
-        backend_installed: backend::is_available(),
+        backend_installed: support == Support::Ready,
+        support,
         disabled: is_disabled(),
         env_disabled: env_disabled(),
         reason: DISABLE_REASON.lock().ok().and_then(|r| r.clone()),
@@ -505,30 +573,57 @@ impl FrostStatus {
                 "off ({})",
                 self.reason.as_deref().unwrap_or("kill switch tripped")
             )
-        } else if !self.backend_installed {
-            "unavailable (no GL backend on this host)".to_owned()
         } else {
-            match self.last {
-                Some(last) => format!("ready, last frame {}", last.label()),
-                None => "ready".to_owned(),
+            match &self.support {
+                Support::Ready => match self.last {
+                    Some(last) => format!("ready, last frame {}", last.label()),
+                    None => "ready".to_owned(),
+                },
+                Support::Pending => "pending (starts on the first glow paint)".to_owned(),
+                Support::NotBuilt => "unavailable (built without a blur backend)".to_owned(),
+                Support::NotGlow => "unavailable (the renderer is not glow)".to_owned(),
+                Support::Unsupported(detail) => format!("unavailable on this host: {detail}"),
             }
+        }
+    }
+
+    /// Why frosting does not run, as a sentence for a settings panel; `None` while it runs or is starting.
+    pub fn notice(&self) -> Option<&'static str> {
+        if self.disabled {
+            return Some("GPU blur is switched off; the tint still applies.");
+        }
+        match self.support {
+            Support::Ready | Support::Pending => None,
+            Support::NotBuilt => {
+                Some("This build has no GPU blur backend; the tint still applies.")
+            }
+            Support::NotGlow => {
+                Some("GPU blur needs eframe's glow renderer; the tint still applies.")
+            }
+            Support::Unsupported(_) => Some(UNAVAILABLE_NOTICE),
         }
     }
 }
 
-#[cfg(not(feature = "glass"))]
+#[cfg(not(glass_backend))]
 mod backend {
-    use super::{FrostReport, GlassParams};
-    use eframe::egui::{Rect, Ui};
+    use super::{FrostReport, GlassParams, Support};
+    use eframe::egui::{Context, Rect, Ui};
 
     pub(super) fn is_available() -> bool {
         false
+    }
+
+    pub(super) fn support() -> Support {
+        Support::NotBuilt
     }
 
     pub(super) fn install(_: &eframe::CreationContext<'_>) -> bool {
         log::info!("backdrop blur unavailable: built without the `glass` feature");
         false
     }
+
+    pub(super) fn request(_: &Context) {}
 
     pub(super) fn frost(_: &Ui, _: Rect, _: GlassParams) -> bool {
         false
@@ -541,22 +636,30 @@ mod backend {
     }
 }
 
-#[cfg(feature = "glass")]
+#[cfg(glass_backend)]
 mod backend {
-    use super::{FrostReport, GlassParams};
+    use super::{FrostReport, GlassParams, Support};
     use backdrop_blur_egui::{
         BlurRadius, CornerRadius, FrostOutcome, GrabPassRenderer, Presence, RepaintPolicy, Surface,
-        Tint,
+        Tint, glow,
     };
-    use eframe::egui::{Rect, Ui};
-    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-    use std::sync::{Arc, RwLock};
+    use eframe::egui::{Context, Id, LayerId, Order, PaintCallback, Rect, Ui, Vec2};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex, RwLock};
 
     /// Polls with frosts enqueued, since the last fired callback, before the wiring warning.
     const SILENT_POLLS_BEFORE_WARN: u32 = 3;
+    /// Frames whose probe did not run before the renderer counts as not glow.
+    const UNANSWERED_PROBES: u32 = 3;
+    /// Id source of the layer the probe paints on.
+    const PROBE_LAYER: &str = "egui_theme_kit.glass.probe";
 
     /// One GL context per process; `on_exit` hands back the context without an egui `Context`.
     static RENDERER: RwLock<Option<Arc<GrabPassRenderer>>> = RwLock::new(None);
+    /// Why the backend did not come up, once known.
+    static REFUSAL: Mutex<Option<Support>> = Mutex::new(None);
+    /// Pacing of the GL probe.
+    static PROBE: Probe = Probe::new();
     /// Frosts enqueued since the last poll.
     static ENQUEUED: AtomicUsize = AtomicUsize::new(0);
     /// Polls with frosts enqueued since the last fired callback.
@@ -572,12 +675,38 @@ mod backend {
         RENDERER.read().is_ok_and(|r| r.is_some())
     }
 
-    pub(super) fn install(cc: &eframe::CreationContext<'_>) -> bool {
+    pub(super) fn support() -> Support {
         if is_available() {
-            return true;
+            return Support::Ready;
         }
+        REFUSAL
+            .lock()
+            .ok()
+            .and_then(|refusal| refusal.clone())
+            .unwrap_or(Support::Pending)
+    }
+
+    /// Whether the backend is neither built nor refused.
+    fn pending() -> bool {
+        !is_available() && REFUSAL.lock().is_ok_and(|refusal| refusal.is_none())
+    }
+
+    /// Records why the backend cannot come up.
+    fn refuse(support: Support) {
+        if let Ok(mut refusal) = REFUSAL.lock() {
+            *refusal = Some(support);
+        }
+    }
+
+    pub(super) fn install(cc: &eframe::CreationContext<'_>) -> bool {
+        is_available() || install_from(cc)
+    }
+
+    #[cfg(feature = "glass")]
+    fn install_from(cc: &eframe::CreationContext<'_>) -> bool {
         let Some(gl) = cc.gl.as_ref() else {
             log::info!("backdrop blur unavailable: eframe is not running the glow backend");
+            refuse(Support::NotGlow);
             return false;
         };
         log_gl_identity(gl);
@@ -585,6 +714,17 @@ mod backend {
             log::info!("backdrop blur not installed: frosting is switched off");
             return false;
         }
+        build(gl)
+    }
+
+    #[cfg(not(feature = "glass"))]
+    fn install_from(_: &eframe::CreationContext<'_>) -> bool {
+        log::debug!("backdrop blur starts on the first glow paint");
+        false
+    }
+
+    /// Builds the renderer on the current GL context, recording the error when the context cannot run it.
+    fn build(gl: &Arc<glow::Context>) -> bool {
         match GrabPassRenderer::new(gl) {
             Ok(renderer) => {
                 match RENDERER.write() {
@@ -599,14 +739,96 @@ mod backend {
             }
             Err(e) => {
                 log::warn!("backdrop blur unavailable: {e}");
+                refuse(Support::Unsupported(e.to_string()));
                 false
             }
         }
     }
 
+    /// Paints a probe that builds the renderer from the next glow paint, once per pass while pending.
+    pub(super) fn request(ctx: &Context) {
+        let content = ctx.content_rect();
+        if !pending()
+            || !content.is_positive()
+            || !ctx.input(|i| i.viewport().visible().unwrap_or(true))
+        {
+            return;
+        }
+        match PROBE.step(ctx.cumulative_pass_nr(), ctx.cumulative_frame_nr()) {
+            Step::Skip => {}
+            Step::GiveUp => {
+                log::info!(
+                    "backdrop blur unavailable: no glow paint callback ran in {UNANSWERED_PROBES} frames"
+                );
+                refuse(Support::NotGlow);
+            }
+            Step::Enqueue => {
+                let probe = egui_glow::CallbackFn::new(|_, painter| adopt(painter.gl()));
+                ctx.layer_painter(LayerId::new(Order::Background, Id::unique(PROBE_LAYER)))
+                    .add(PaintCallback {
+                        rect: Rect::from_min_size(content.min, Vec2::splat(1.0)),
+                        callback: Arc::new(probe),
+                    });
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// Builds the renderer from a glow painter's context unless the backend is already decided.
+    fn adopt(gl: &Arc<glow::Context>) {
+        PROBE.answered();
+        if pending() {
+            log_gl_identity(gl);
+            build(gl);
+        }
+    }
+
+    /// What [`Probe::step`] decides for one request.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Step {
+        /// A probe already went out this pass.
+        Skip,
+        /// Paint a probe this pass.
+        Enqueue,
+        /// Probes went out on too many frames without one running.
+        GiveUp,
+    }
+
+    /// One probe per pass, counting the frames whose probe did not run.
+    struct Probe {
+        pass: AtomicU64,
+        frame: AtomicU64,
+        unanswered: AtomicU32,
+    }
+
+    impl Probe {
+        const fn new() -> Self {
+            Self {
+                pass: AtomicU64::new(u64::MAX),
+                frame: AtomicU64::new(u64::MAX),
+                unanswered: AtomicU32::new(0),
+            }
+        }
+
+        fn step(&self, pass: u64, frame: u64) -> Step {
+            if self.pass.swap(pass, Ordering::Relaxed) == pass {
+                return Step::Skip;
+            }
+            let new_frame = self.frame.swap(frame, Ordering::Relaxed) != frame;
+            if new_frame && self.unanswered.fetch_add(1, Ordering::Relaxed) >= UNANSWERED_PROBES {
+                return Step::GiveUp;
+            }
+            Step::Enqueue
+        }
+
+        fn answered(&self) {
+            self.unanswered.store(0, Ordering::Relaxed);
+        }
+    }
+
     /// Records which driver and adapter eframe's GL context landed on.
-    fn log_gl_identity(gl: &backdrop_blur_egui::glow::Context) {
-        use backdrop_blur_egui::glow::{self, HasContext};
+    fn log_gl_identity(gl: &glow::Context) {
+        use glow::HasContext;
         let read = |name: u32| unsafe { gl.get_parameter_string(name) };
         log::info!(
             "GL context: vendor={:?} renderer={:?} version={:?} glsl={:?}",
@@ -617,7 +839,7 @@ mod backend {
         );
     }
 
-    pub(super) fn shutdown(gl: &backdrop_blur_egui::glow::Context) {
+    pub(super) fn shutdown(gl: &glow::Context) {
         let taken = RENDERER.write().ok().and_then(|mut slot| slot.take());
         if let Some(renderer) = taken {
             renderer.destroy(gl);
@@ -626,6 +848,7 @@ mod backend {
 
     pub(super) fn frost(ui: &Ui, rect: Rect, params: GlassParams) -> bool {
         let Some(renderer) = renderer() else {
+            request(ui.ctx());
             return false;
         };
         renderer.frost(
@@ -716,6 +939,34 @@ mod backend {
             assert!(!silent(&streak));
             assert!(!note_silent_poll(&streak, 0, FrostOutcome::DidNotFire));
             assert!(silent(&streak));
+        }
+
+        #[test]
+        fn a_probe_goes_out_once_per_pass_and_gives_up_after_three_silent_frames() {
+            let probe = Probe::new();
+            assert_eq!(probe.step(0, 0), Step::Enqueue);
+            assert_eq!(probe.step(0, 0), Step::Skip);
+            assert_eq!(
+                probe.step(1, 0),
+                Step::Enqueue,
+                "a discarded pass sends again"
+            );
+            assert_eq!(probe.step(2, 1), Step::Enqueue);
+            assert_eq!(probe.step(3, 2), Step::Enqueue);
+            assert_eq!(probe.step(4, 3), Step::GiveUp);
+        }
+
+        #[test]
+        fn an_answered_probe_restarts_the_count() {
+            let probe = Probe::new();
+            for frame in 0..3 {
+                assert_eq!(probe.step(frame, frame), Step::Enqueue);
+            }
+            probe.answered();
+            for frame in 3..6 {
+                assert_eq!(probe.step(frame, frame), Step::Enqueue);
+            }
+            assert_eq!(probe.step(6, 6), Step::GiveUp);
         }
 
         #[test]
@@ -844,6 +1095,7 @@ mod tests {
     fn the_status_summary_names_the_state() {
         let mut status = FrostStatus {
             backend_installed: false,
+            support: Support::NotBuilt,
             disabled: false,
             env_disabled: false,
             reason: None,
@@ -852,7 +1104,12 @@ mod tests {
             last: None,
         };
         assert!(status.summary().starts_with("unavailable"));
+        status.support = Support::Pending;
+        assert!(status.summary().starts_with("pending"));
+        status.support = Support::Unsupported("GL 2.1".to_owned());
+        assert_eq!(status.summary(), "unavailable on this host: GL 2.1");
         status.backend_installed = true;
+        status.support = Support::Ready;
         assert_eq!(status.summary(), "ready");
         status.last = Some(FrostReport::Composited);
         assert_eq!(status.summary(), "ready, last frame composited");
@@ -861,6 +1118,34 @@ mod tests {
         assert_eq!(status.summary(), "off (--no-frost)");
         status.env_disabled = true;
         assert!(status.summary().contains(NO_FROST_ENV));
+    }
+
+    #[test]
+    fn only_a_failed_gl_context_is_blamed_on_the_host() {
+        let status = |support: Support, disabled: bool| FrostStatus {
+            backend_installed: support == Support::Ready,
+            support,
+            disabled,
+            env_disabled: false,
+            reason: None,
+            consecutive_failures: 0,
+            composited_frames: 0,
+            last: None,
+        };
+        assert_eq!(status(Support::Ready, false).notice(), None);
+        assert_eq!(status(Support::Pending, false).notice(), None);
+        assert_eq!(
+            status(Support::Unsupported("GL 2.1".to_owned()), false).notice(),
+            Some(UNAVAILABLE_NOTICE)
+        );
+        for (support, disabled) in [
+            (Support::NotBuilt, false),
+            (Support::NotGlow, false),
+            (Support::Ready, true),
+        ] {
+            let notice = status(support, disabled).notice().expect("a notice");
+            assert!(!notice.contains("host"), "{notice}");
+        }
     }
 
     pub(super) fn input() -> RawInput {
@@ -888,7 +1173,7 @@ mod tests {
     }
 
     /// Paint callbacks in a frame's output.
-    #[cfg(feature = "glass")]
+    #[cfg(glass_backend)]
     pub(super) fn callbacks(full: &eframe::egui::FullOutput) -> usize {
         full.shapes
             .iter()

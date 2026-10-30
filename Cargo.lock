@@ -647,6 +647,7 @@ dependencies = [
  "egui-toast",
  "egui_dock",
  "egui_extras",
+ "egui_glow",
  "log",
  "raw-window-handle",
  "regex",

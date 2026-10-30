@@ -19,8 +19,8 @@ dock = ["dep:egui_dock"]
 data-table = ["dep:egui-data-table"]
 # egui-toast notifications in the kit look (`toast`, the debug panel's toast tester).
 toast = ["dep:egui-toast"]
-# GPU backdrop blur through the vendored grab-pass backend; eframe-on-glow only.
-glass = ["dep:backdrop-blur-egui", "eframe/glow"]
+# eframe's glow renderer, so `init` builds the blur backend from `cc.gl`; also builds the backend on iOS and wasm32.
+glass = ["dep:backdrop-blur-egui", "dep:egui_glow", "eframe/glow"]
 # Native file dialogs and the user config directory for theme import and export.
 files = ["dep:rfd", "dep:directories"]
 # Themed control widgets.
@@ -44,10 +44,16 @@ egui_dock = { git = "https://github.com/shadowbrok3r/egui_dock", branch = "egui-
 egui-data-table = { git = "https://github.com/shadowbrok3r/egui-data-table", branch = "egui-037", optional = true }
 egui-toast = { git = "https://github.com/shadowbrok3r/egui-toast", branch = "egui-037", optional = true }
 backdrop-blur-egui = { path = "../backdrop-blur-egui", default-features = false, features = ["grab-pass"], optional = true }
+egui_glow = { workspace = true, optional = true }
 rfd = { version = "0.17", optional = true }
 directories = { version = "6", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 regex = { version = "1", optional = true }
+
+# The blur backend wherever eframe can run glow; it adopts the GL context of the first glow paint.
+[target.'cfg(not(any(target_os = "ios", target_arch = "wasm32")))'.dependencies]
+backdrop-blur-egui = { path = "../backdrop-blur-egui", default-features = false, features = ["grab-pass"] }
+egui_glow.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = { version = "0.6", optional = true }

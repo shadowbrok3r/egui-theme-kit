@@ -115,16 +115,20 @@ fn glass_block(ui: &mut Ui, state: &mut PickerState) {
     let before = params;
     ui.horizontal_wrapped(|ui| {
         ui.checkbox(&mut params.enabled, "Backdrop blur");
-        if !state
-            .options
-            .glass_available
-            .map_or_else(glass::is_available, |available| available())
-        {
-            ui.label(
-                RichText::new("GPU blur is unavailable on this host; the tint still applies.")
-                    .weak()
-                    .small(),
-            );
+        match state.options.glass_available {
+            Some(available) => {
+                if !available() {
+                    ui.label(RichText::new(glass::UNAVAILABLE_NOTICE).weak().small());
+                }
+            }
+            None => {
+                glass::probe(&ctx);
+                let status = glass::status();
+                if let Some(notice) = status.notice() {
+                    ui.label(RichText::new(notice).weak().small())
+                        .on_hover_text(status.summary());
+                }
+            }
         }
     });
     ui.add_enabled_ui(params.enabled, |ui| {

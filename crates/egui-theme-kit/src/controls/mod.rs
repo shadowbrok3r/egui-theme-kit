@@ -3,7 +3,7 @@
 mod buttons;
 mod fields;
 pub mod gallery;
-#[cfg(feature = "glass")]
+#[cfg(glass_backend)]
 pub mod glass_card;
 mod icon;
 pub mod icons;

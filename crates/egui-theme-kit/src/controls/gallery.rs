@@ -604,7 +604,7 @@ fn surfaces(ui: &mut Ui) {
         let _ = subheading(ui, icons::GEAR, "Primary volume 1 TB");
         let _ = status_label(ui, icons::CHECK_CIRCLE, "SMART healthy", t.success);
     });
-    #[cfg(feature = "glass")]
+    #[cfg(glass_backend)]
     {
         use super::glass_card;
         glass_card::titled_card(ui, icons::GEAR, "Frosted card", Some("glass"), |ui| {

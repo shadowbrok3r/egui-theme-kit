@@ -69,7 +69,7 @@
 //!
 //! | Feature | Default | Adds |
 //! |---|---|---|
-//! | `glass` | yes | GPU backdrop blur through a grab-pass backend; needs eframe on glow |
+//! | `glass` | yes | eframe's `glow`, so `init` builds the blur backend from `cc.gl`; the backend on iOS and wasm32 |
 //! | `files` | yes | native import/export dialogs and the user theme directory |
 //! | `dock` | yes | `dock_style` for `egui_dock` |
 //! | `toast` | yes | themed `egui-toast` notifications and the panel's toast tester |
@@ -80,7 +80,8 @@
 //! | `logger` | no | in-app log viewer |
 //!
 //! With `default-features = false` the core remains: tokens, metrics, fonts, the widget theme,
-//! presets, saved themes and the debug panel.
+//! presets, saved themes and the debug panel. The blur backend is built on every target except iOS
+//! and wasm32 regardless; without `glass` it adopts the GL context of the first glow paint.
 
 #[cfg(feature = "picker")]
 pub mod appearance;
