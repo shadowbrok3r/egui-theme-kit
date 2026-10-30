@@ -2,7 +2,7 @@
 
 use std::sync::LazyLock;
 
-use eframe::egui::{Color32, Shadow, Stroke, Style, Visuals};
+use egui::{Color32, Shadow, Stroke, Style, Visuals};
 
 use super::{
     glass::GlassParams,

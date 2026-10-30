@@ -1,6 +1,6 @@
 //! The picker header: what is applied, whether it was modified, and the revert and save controls.
 
-use eframe::egui::{Frame, Key, RichText, TextEdit, Ui};
+use egui::{Frame, Key, RichText, TextEdit, Ui};
 
 use super::{
     label,
@@ -32,7 +32,7 @@ fn title_row(ui: &mut Ui, state: &PickerState, store: &dyn ThemeStore) {
         ui.label(
             RichText::new(state.current_name(&ctx))
                 .semibold()
-                .size(ui.text_style_height(&eframe::egui::TextStyle::Heading)),
+                .size(ui.text_style_height(&egui::TextStyle::Heading)),
         );
         if state.is_modified() {
             ui.label(RichText::new("• modified").color(colors::warn(ui)));

@@ -1,6 +1,6 @@
 //! Store readiness and change polling: the theme of a late-opening store reaches the live context.
 
-use eframe::egui::Context;
+use egui::Context;
 
 use super::KitState;
 use crate::{
@@ -214,14 +214,14 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use eframe::egui::{Context, RawInput};
+    use egui::{Context, RawInput};
 
     use super::*;
     use crate::{
         metrics::Density,
         presets::{self, apply_preset, installed_preset},
         startup::{
-            KitConfig, adopt_live_theme, attach_store, init_context,
+            KitConfig, adopt_live_theme, attach_store, init_ctx,
             tests::{others, preset_of, preset_theme},
             theme_epoch,
         },
@@ -247,9 +247,8 @@ mod tests {
             let backend = SharedBackend::default();
             let store = Arc::new(CachedStore::open_lazy(backend.clone()));
             let ctx = Context::default();
-            init_context(
+            init_ctx(
                 &ctx,
-                None,
                 configure(KitConfig::new().parse_cli(false).store(store.clone())),
             );
             Self {
@@ -551,7 +550,7 @@ mod tests {
     fn a_store_attached_after_init_is_polled_like_a_configured_one() {
         let [stored, ..] = others();
         let ctx = Context::default();
-        init_context(&ctx, None, KitConfig::new().parse_cli(false));
+        init_ctx(&ctx, KitConfig::new().parse_cli(false));
         assert_eq!(poll_store(&ctx), StorePoll::Idle);
 
         let store = Arc::new(MemoryStore::with_snapshot(crate::store::StoreSnapshot {

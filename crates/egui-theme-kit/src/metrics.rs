@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{
+use egui::{
     Color32, Context, FontFamily, FontId, Id, Margin, Style, TextStyle, Vec2,
     style::{HandleShape, ScrollStyle},
     vec2,
@@ -293,7 +293,7 @@ fn whole_px(width: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Color32, CornerRadius, Stroke, Visuals};
+    use egui::{Color32, CornerRadius, Stroke, Visuals};
 
     fn fractional_style() -> Style {
         let mut style = Style::default();

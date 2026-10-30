@@ -2,7 +2,7 @@
 
 use std::ops::RangeInclusive;
 
-use eframe::egui::{
+use egui::{
     Color32, CursorIcon, Key, Rect, Response, Role, Sense, Stroke, StrokeKind, TextStyle, Ui, Vec2,
     WidgetInfo, emath::Numeric, lerp, pos2, remap_clamp, vec2,
 };
@@ -192,7 +192,7 @@ impl<'a> ProgressBar<'a> {
 }
 
 /// The progress-bar text face.
-fn medium_font_sized_small(ui: &Ui) -> eframe::egui::FontId {
+fn medium_font_sized_small(ui: &Ui) -> egui::FontId {
     super::medium_font_sized(ui, BAR_TEXT_PT)
 }
 

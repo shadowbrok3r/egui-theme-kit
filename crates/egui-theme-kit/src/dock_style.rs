@@ -1,6 +1,6 @@
 //! egui_dock chrome: rounded cards on a gutter, with pill tabs, built from the published tokens.
 
-use eframe::egui::{Color32, Context, CornerRadius, Margin, Stroke};
+use egui::{Color32, Context, CornerRadius, Margin, Stroke};
 use egui_dock::{Style, TabAddAlign, TabInteractionStyle};
 
 use super::{metrics::Metrics, tokens::Tokens};
@@ -123,7 +123,7 @@ pub fn style(ctx: &Context) -> Style {
 mod tests {
     use super::super::metrics::{self, Density};
     use super::*;
-    use eframe::egui::Style as EguiStyle;
+    use egui::Style as EguiStyle;
 
     fn context(density: Density) -> Context {
         let ctx = Context::default();

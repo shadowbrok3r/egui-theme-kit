@@ -6,8 +6,8 @@
 
 pub mod windows;
 
-use eframe::egui::emath::GuiRounding as _;
-use eframe::egui::{
+use egui::emath::GuiRounding as _;
+use egui::{
     Align, AsIdSalt, Color32, Context, CursorIcon, Event, Frame, Id, LayerId, Layout, Modifiers,
     Order, Panel, Plugin, PointerButton, Pos2, RawInput, Rect, ResizeDirection, Role, Sense,
     Stroke, StrokeKind, TextWrapMode, Ui, UiBuilder, Vec2, ViewportCommand, WidgetInfo, pos2, vec2,
@@ -301,7 +301,7 @@ fn hand_to_window_manager(ctx: &Context, command: ViewportCommand) {
 /// button release, so egui keeps the press and the next click lands on the wrong widget.
 #[derive(Default)]
 struct PointerRelease {
-    pending: Option<(eframe::egui::ViewportId, Pos2)>,
+    pending: Option<(egui::ViewportId, Pos2)>,
 }
 
 impl Plugin for PointerRelease {
@@ -501,7 +501,7 @@ pub fn window_edges(ui: &mut Ui) {
 mod tests {
     use super::*;
     use crate::metrics::{self, Density};
-    use eframe::egui::{
+    use egui::{
         Event, FontDefinitions, Modifiers, Pos2, RawInput, Shape, Style, ViewportId, ViewportInfo,
     };
 
@@ -516,7 +516,7 @@ mod tests {
         /// Names of the left-slot buttons clicked so far.
         clicked: Vec<&'static str>,
         /// Shapes of the last frame.
-        shapes: Vec<eframe::egui::epaint::ClippedShape>,
+        shapes: Vec<egui::epaint::ClippedShape>,
     }
 
     impl Win {

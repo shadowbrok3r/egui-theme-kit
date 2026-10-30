@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use eframe::egui::{Context, Id};
+use egui::{Context, Id};
 
 use super::edit::{self, Role, Semantic, Surface};
 use super::io::{self, DialogResult};
@@ -551,15 +551,15 @@ impl PickerState {
         edit::glassify_live(ctx);
     }
 
-    pub fn set_surface(&mut self, ctx: &Context, surface: Surface, color: eframe::egui::Color32) {
+    pub fn set_surface(&mut self, ctx: &Context, surface: Surface, color: egui::Color32) {
         edit::edit_style(ctx, |style| surface.apply(style, color));
     }
 
-    pub fn set_role(&mut self, ctx: &Context, role: Role, color: eframe::egui::Color32) {
+    pub fn set_role(&mut self, ctx: &Context, role: Role, color: egui::Color32) {
         edit::edit_style(ctx, |style| role.apply(style, color));
     }
 
-    pub fn set_semantic(&mut self, ctx: &Context, which: Semantic, color: eframe::egui::Color32) {
+    pub fn set_semantic(&mut self, ctx: &Context, which: Semantic, color: egui::Color32) {
         edit::edit_semantic(ctx, |colors: &mut SemanticColors| {
             which.apply(colors, color)
         });

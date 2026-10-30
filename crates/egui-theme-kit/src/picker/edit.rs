@@ -1,6 +1,6 @@
 //! Edits that map a colour picked for a token or role onto the style fields the token is derived from.
 
-use eframe::egui::{Color32, Context, Style};
+use egui::{Color32, Context, Style};
 
 use crate::{
     presets,
@@ -266,7 +266,7 @@ fn with_alpha_of(old: Color32, color: Color32) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }
 
-fn set_outline(stroke: &mut eframe::egui::Stroke, color: Color32) {
+fn set_outline(stroke: &mut egui::Stroke, color: Color32) {
     stroke.color = color;
     stroke.width = stroke.width.max(1.0);
 }

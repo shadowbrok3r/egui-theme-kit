@@ -1,6 +1,6 @@
 //! The presets that ship with the kit.
 
-use eframe::egui::{Color32, Style};
+use egui::{Color32, Style};
 
 use super::{
     PresetDef, galactic,

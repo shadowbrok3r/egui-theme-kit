@@ -1,11 +1,10 @@
 //! Tinted-glass theme: translucent accent panes over a near-black base.
 
-use eframe::egui;
-use eframe::egui::style::{
+use egui::style::{
     HandleShape, ImeComposition, Interaction, ScrollStyle, Selection, Spacing, TextCursorStyle,
     WidgetVisuals, Widgets,
 };
-use eframe::egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Vec2, Visuals};
+use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Vec2, Visuals};
 
 use super::glass::GlassParams;
 
@@ -94,7 +93,7 @@ fn glassify_state(
 }
 
 /// Re-styles `style` as tinted glass from its own palette; backgrounds, rounding, spacing, fonts and text colors stay.
-pub fn glassify(style: &eframe::egui::Style) -> eframe::egui::Style {
+pub fn glassify(style: &egui::Style) -> egui::Style {
     let mut out = style.clone();
     let v = &mut out.visuals;
     let base = v.panel_fill;

@@ -1,6 +1,6 @@
 //! The import and export section: theme files, the clipboard and a paste box.
 
-use eframe::egui::{RichText, ScrollArea, TextEdit, Ui};
+use egui::{RichText, ScrollArea, TextEdit, Ui};
 
 use super::{label, state::PickerState};
 use crate::kit::{self, ButtonKind};

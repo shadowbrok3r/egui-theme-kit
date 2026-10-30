@@ -65,14 +65,16 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use eframe::egui::{Context, Style};
+use egui::{Context, Style};
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(feature = "eframe", feature = "files"))]
+use super::saved::{theme_from_json, theme_to_json};
 use super::{
     glass::GlassParams,
     persist::{self, ThemeSource},
     presets,
-    saved::{SavedTheme, SemanticColors, theme_from_json, theme_to_json},
+    saved::{SavedTheme, SemanticColors},
     startup,
 };
 
@@ -878,6 +880,7 @@ pub const USER_THEMES_KEY: &str = "egui_theme_kit.user_themes.v1";
 /// Storage key of the startup choice in eframe storage.
 pub const STARTUP_KEY: &str = "egui_theme_kit.startup.v1";
 
+#[cfg(any(feature = "eframe", feature = "files"))]
 #[derive(Serialize, Deserialize)]
 struct Envelope {
     name: String,
@@ -886,6 +889,7 @@ struct Envelope {
     theme: serde_json::Value,
 }
 
+#[cfg(any(feature = "eframe", feature = "files"))]
 impl Envelope {
     fn from_named(named: &NamedTheme) -> anyhow::Result<Self> {
         Ok(Self {
@@ -906,10 +910,12 @@ impl Envelope {
 }
 
 /// A [`ThemeStore`] over eframe's key-value storage: read once at startup, written by [`EframeStorageStore::save_in`].
+#[cfg(feature = "eframe")]
 pub struct EframeStorageStore {
     cache: Cache,
 }
 
+#[cfg(feature = "eframe")]
 impl EframeStorageStore {
     /// Reads the active theme, user themes and startup choice from `storage`; unreadable entries are skipped and reported.
     pub fn from_storage(storage: Option<&dyn eframe::Storage>) -> Self {
@@ -985,6 +991,7 @@ impl EframeStorageStore {
     }
 }
 
+#[cfg(feature = "eframe")]
 impl ThemeStore for EframeStorageStore {
     cache_reads!();
 
@@ -1409,24 +1416,24 @@ impl AutoSave {
 }
 
 /// A directory under the system temp dir that is removed on drop.
-#[cfg(test)]
+#[cfg(all(test, any(feature = "eframe", feature = "files")))]
 pub(crate) struct TestDir(std::path::PathBuf);
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "eframe", feature = "files")))]
 impl TestDir {
     pub(crate) fn path(&self) -> &std::path::Path {
         &self.0
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "eframe", feature = "files")))]
 impl Drop for TestDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "eframe", feature = "files")))]
 pub(crate) fn test_dir(tag: &str) -> TestDir {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -1486,7 +1493,9 @@ mod tests {
         theme_chrome::graphite_theme,
     };
     use super::*;
+    #[cfg(feature = "eframe")]
     use eframe::Storage as _;
+    #[cfg(feature = "eframe")]
     use std::collections::HashMap;
 
     fn preset_theme(preset: PresetStyles) -> SavedTheme {
@@ -1499,9 +1508,11 @@ mod tests {
         presets::exact_preset(&presets::normalized(&theme.style)).map(|d| d.id)
     }
 
+    #[cfg(feature = "eframe")]
     #[derive(Default)]
     struct MemStorage(HashMap<String, String>);
 
+    #[cfg(feature = "eframe")]
     impl eframe::Storage for MemStorage {
         fn get_string(&self, key: &str) -> Option<String> {
             self.0.get(key).cloned()
@@ -1637,6 +1648,7 @@ mod tests {
         exercise_store(&MemoryStore::default());
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn the_eframe_store_meets_the_contract() {
         exercise_store(&EframeStorageStore::from_storage(None));
@@ -2045,6 +2057,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn the_eframe_store_round_trips_through_storage_and_removes_the_default_entry() {
         let mut storage = MemStorage::default();
@@ -2071,6 +2084,7 @@ mod tests {
         assert!(storage.get_string(STARTUP_KEY).is_none());
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn the_eframe_store_reads_what_persist_saved() {
         let ctx = Context::default();
@@ -2081,6 +2095,7 @@ mod tests {
         assert_eq!(recognised(&store.load_active().unwrap()), Some("twilight"));
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn the_eframe_store_skips_unreadable_records_and_says_so() {
         let mut storage = MemStorage::default();

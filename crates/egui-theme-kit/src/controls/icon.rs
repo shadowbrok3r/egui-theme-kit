@@ -1,6 +1,6 @@
 //! Icon slot every control accepts: a font glyph, a tinted static image or a painter function.
 
-use eframe::egui::{
+use egui::{
     Align2, Color32, FontFamily, FontId, Image, ImageSource, Painter, Pos2, Rect, Response, Sense,
     Ui, Vec2, load::Bytes,
 };
@@ -174,7 +174,7 @@ fn snapped_square(center: Pos2, size: f32, pixels_per_point: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Context, Shape};
+    use egui::{Context, Shape};
 
     #[test]
     fn a_snapped_square_lands_on_whole_pixels() {

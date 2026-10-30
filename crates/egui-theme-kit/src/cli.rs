@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use eframe::egui::{Color32, Context, FontFamily};
+use egui::{Color32, Context, FontFamily};
 use serde_json::{Value, json};
 
 use super::{
@@ -122,7 +122,7 @@ fn hex_rgba(c: Color32) -> String {
     format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
 }
 
-fn vec2(v: eframe::egui::Vec2) -> Value {
+fn vec2(v: egui::Vec2) -> Value {
     json!([v.x, v.y])
 }
 
@@ -226,7 +226,7 @@ pub fn dump_with(options: &Options, fonts: &FontConfig) -> anyhow::Result<String
     let ctx = Context::default();
     fonts::set_config(&ctx, fonts.clone());
     fonts::install_for_context(&ctx);
-    let (theme, source) = persist::resolve_in(&ctx, None, options.theme_path.as_deref());
+    let (theme, source) = persist::resolve_file_in(&ctx, options.theme_path.as_deref());
     apply_saved_theme(&ctx, theme);
     persist::set_source(&ctx, source);
     ctx.run_ui(Default::default(), |_| {})

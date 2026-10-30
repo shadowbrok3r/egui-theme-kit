@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use eframe::egui::{
+use egui::{
     Align, AsIdSalt, Atoms, Color32, Context, FontFamily, FontId, Frame, Galley, Grid, Id, Layout,
     Margin, Modal, Popup, PopupCloseBehavior, Pos2, Rect, RectAlign, Response, RichText, Sense,
     Stroke, TextStyle, TextWrapMode, Tooltip, Ui, UiBuilder, UiKind, UiStackInfo, Vec2, WidgetInfo,
@@ -97,11 +97,8 @@ pub fn bar<R>(ui: &mut Ui, kind: BarKind, add: impl FnOnce(&mut Ui) -> R) -> R {
         rect.bottom() - 1.0
     };
     let y = ui.painter().round_to_pixel_center(y + 0.5);
-    ui.painter().hline(
-        rect.x_range(),
-        y,
-        eframe::egui::Stroke::new(1.0, t.separator),
-    );
+    ui.painter()
+        .hline(rect.x_range(), y, egui::Stroke::new(1.0, t.separator));
     let inner = rect.shrink2(vec2(m.pad.x, 0.0));
     let layout = Layout::left_to_right(Align::Center);
     let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(layout));
@@ -575,10 +572,8 @@ fn menu_row(ui: &mut Ui, item: &MenuItem<'_>, trail: Trail) -> Response {
     let size = vec2(fill_width(ui).max(min_w), m.row_h);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     response.widget_info(|| match trail {
-        Trail::Check(on) => {
-            WidgetInfo::selected(eframe::egui::Role::CheckBox, ui.is_enabled(), on, label)
-        }
-        _ => WidgetInfo::labeled(eframe::egui::Role::Button, ui.is_enabled(), label),
+        Trail::Check(on) => WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), on, label),
+        _ => WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label),
     });
     if ui.is_rect_visible(rect) {
         let (state, focused) = state_of(ui, &response);
@@ -797,7 +792,7 @@ impl<'a> MenuButton<'a> {
         vec2(whole(self.content_w(&m, text_w)), m.control_h)
     }
 
-    fn galley(&self, ui: &Ui) -> Option<std::sync::Arc<eframe::egui::Galley>> {
+    fn galley(&self, ui: &Ui) -> Option<std::sync::Arc<egui::Galley>> {
         (!self.label.is_empty())
             .then(|| text_galley(ui, self.label, medium_font(ui, TextStyle::Button)))
     }
@@ -825,8 +820,7 @@ impl<'a> MenuButton<'a> {
         } else {
             self.label
         };
-        response
-            .widget_info(|| WidgetInfo::labeled(eframe::egui::Role::Button, ui.is_enabled(), name));
+        response.widget_info(|| WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), name));
         let inner = popup_menu(&response, self.keep_open, add);
         let open = Popup::is_id_open(ui.ctx(), menu_popup_id(response.id));
         if ui.is_rect_visible(rect) {
@@ -991,7 +985,7 @@ pub fn form_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> 
     let galley = text_galley(ui, label, TextStyle::Body.resolve(ui.style()));
     let (rect, response) =
         ui.allocate_exact_size(vec2(galley.size().x, m.control_h), Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(eframe::egui::Role::Label, ui.is_enabled(), label));
+    response.widget_info(|| WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label));
     let y = (rect.center().y - galley.size().y / 2.0).round();
     ui.painter()
         .galley(pos2(rect.left(), y), galley, t.text_dim);

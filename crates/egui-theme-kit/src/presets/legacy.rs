@@ -1,6 +1,6 @@
 //! Names and styles earlier releases saved presets under, kept so old records still decode.
 
-use eframe::egui::Style;
+use egui::Style;
 
 use crate::glass_material;
 

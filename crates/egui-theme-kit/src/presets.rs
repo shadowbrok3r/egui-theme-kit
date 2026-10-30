@@ -13,7 +13,7 @@ mod tokyo;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-use eframe::egui::{Color32, Context, Id, Style, Visuals};
+use egui::{Color32, Context, Id, Style, Visuals};
 
 use super::{
     colors::{DEFAULT_ACCENT_SECONDARY, DEFAULT_SUCCESS},
@@ -875,11 +875,11 @@ mod tests {
         assert_eq!(style.spacing.item_spacing, compact.gap);
         assert_eq!(style.spacing.button_padding, compact.pad);
         for (text_style, size) in [
-            (eframe::egui::TextStyle::Small, 10.5),
-            (eframe::egui::TextStyle::Body, 12.5),
-            (eframe::egui::TextStyle::Button, 12.5),
-            (eframe::egui::TextStyle::Monospace, 12.0),
-            (eframe::egui::TextStyle::Heading, 15.0),
+            (egui::TextStyle::Small, 10.5),
+            (egui::TextStyle::Body, 12.5),
+            (egui::TextStyle::Button, 12.5),
+            (egui::TextStyle::Monospace, 12.0),
+            (egui::TextStyle::Heading, 15.0),
         ] {
             assert_eq!(style.text_styles[&text_style].size, size, "{text_style:?}");
         }
@@ -1094,7 +1094,7 @@ mod tests {
             for style in [&current.style, &round_trip(&current).style] {
                 for (text_style, font) in &style.text_styles {
                     assert!(
-                        !matches!(font.family, eframe::egui::FontFamily::Name(_)),
+                        !matches!(font.family, egui::FontFamily::Name(_)),
                         "{}: {text_style:?} saved as {:?}",
                         def.name,
                         font.family,

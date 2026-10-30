@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{
+use egui::{
     Align, AsIdSalt, Color32, CursorIcon, FontId, Galley, Id, IdSalt, Label, Layout, OpenUrl, Rect,
     Response, RichText, Role, Sense, Shape, Stroke, TextStyle, TextWrapMode, Ui, UiBuilder, Vec2,
     WidgetInfo,
@@ -792,7 +792,7 @@ pub fn count_badge(ui: &Ui, anchor: Rect, count: usize, tone: Color32) {
         (COUNT_H / 2.0) as u8,
         tone,
         Stroke::new(1.0, t.base),
-        eframe::egui::StrokeKind::Outside,
+        egui::StrokeKind::Outside,
     );
     let pos = (rect.center() - galley.size() / 2.0).round();
     ui.painter().galley(pos, galley, ink_on(tone));

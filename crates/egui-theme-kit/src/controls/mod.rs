@@ -3,7 +3,6 @@
 mod buttons;
 mod fields;
 pub mod gallery;
-#[cfg(glass_backend)]
 pub mod glass_card;
 mod icon;
 pub mod icons;
@@ -16,7 +15,7 @@ mod toggle;
 
 use std::sync::Arc;
 
-use eframe::egui::{
+use egui::{
     Color32, Context, CornerRadius, FontFamily, FontId, Galley, Id, Rect, Response, Stroke,
     StrokeKind, Style, TextStyle, Ui, text::LayoutJob,
 };

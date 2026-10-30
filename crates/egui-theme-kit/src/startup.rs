@@ -18,12 +18,11 @@
 use std::fmt;
 use std::sync::Arc;
 
-use eframe::egui::{Context, Plugin, Theme, Ui};
+use egui::{Context, Plugin, Theme, Ui};
 
 use super::{
     cli, debug_panel,
     fonts::{self, FontConfig},
-    glass,
     persist::{self, ThemeSource},
     presets::{MATCHABLE_PRESETS, apply_preset, apply_saved_theme, themes_equal},
     saved::SavedTheme,
@@ -127,16 +126,28 @@ impl KitConfig {
 }
 
 /// Installs the glass backend, fonts and the startup theme; the source order is in the crate docs.
+#[cfg(feature = "eframe")]
 pub fn init(cc: &eframe::CreationContext<'_>, cfg: KitConfig) {
     if cfg.parse_cli {
         cli::ensure_installed();
     }
-    glass::install(cc);
+    crate::glass::install(cc);
     init_context(&cc.egui_ctx, cc.storage, cfg);
 }
 
 /// [`init`] without the GL backend: command-line options, fonts and the startup theme on `ctx`.
+#[cfg(feature = "eframe")]
 pub fn init_context(ctx: &Context, storage: Option<&dyn eframe::Storage>, cfg: KitConfig) {
+    init_with(ctx, &|keys| persist::load_stored_from(storage, keys), cfg);
+}
+
+/// [`init_context`] for hosts without eframe (bevy_egui, custom loops): options, fonts, the startup theme and the store poll.
+pub fn init_ctx(ctx: &Context, cfg: KitConfig) {
+    init_with(ctx, &|_| None, cfg);
+}
+
+/// Shared init; `stored` reads the theme a key-value storage holds under the first decodable key.
+fn init_with(ctx: &Context, stored: &dyn Fn(&[&str]) -> Option<SavedTheme>, cfg: KitConfig) {
     if cfg.parse_cli {
         cli::ensure_installed();
     }
@@ -156,7 +167,7 @@ pub fn init_context(ctx: &Context, storage: Option<&dyn eframe::Storage>, cfg: K
 
     let options = cli::options();
     let (theme, source) = startup_theme(
-        storage,
+        stored,
         options.theme_path.as_deref(),
         cfg.store.as_deref(),
         default.as_ref(),
@@ -209,6 +220,7 @@ pub fn is_configured_default(ctx: &Context, theme: &SavedTheme) -> bool {
 }
 
 /// The legacy eframe storage keys registered by the config.
+#[cfg(feature = "eframe")]
 pub(crate) fn legacy_storage_keys(ctx: &Context) -> Vec<String> {
     ctx.with_plugin::<KitState, _>(|state| state.legacy_keys.clone())
         .unwrap_or_default()
@@ -325,7 +337,7 @@ fn configured_default(cfg: &KitConfig) -> Option<SavedTheme> {
 
 /// The first available startup theme: file, ready store, eframe storage, configured default, shipped default.
 fn startup_theme(
-    storage: Option<&dyn eframe::Storage>,
+    stored: &dyn Fn(&[&str]) -> Option<SavedTheme>,
     file: Option<&std::path::Path>,
     store: Option<&dyn ThemeStore>,
     default: Option<&SavedTheme>,
@@ -349,7 +361,7 @@ fn startup_theme(
     let keys: Vec<&str> = std::iter::once(persist::STORAGE_KEY)
         .chain(legacy_keys.iter().map(String::as_str))
         .collect();
-    if let Some(theme) = persist::load_stored_from(storage, &keys) {
+    if let Some(theme) = stored(&keys) {
         return (theme, ThemeSource::Stored);
     }
     match default {
@@ -461,20 +473,25 @@ pub mod store_stub {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[cfg(feature = "eframe")]
     use eframe::Storage as _;
+    #[cfg(feature = "eframe")]
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    #[cfg(feature = "eframe")]
+    use super::super::saved::theme_to_json;
     use super::super::{
         metrics::Density,
         presets::{self, PresetStyles, installed_preset},
-        saved::theme_to_json,
         store::{CachedStore, MemoryStore, StartupTheme, StoreSnapshot, testing::SharedBackend},
     };
 
+    #[cfg(feature = "eframe")]
     #[derive(Default)]
     pub(crate) struct MemStorage(pub HashMap<String, String>);
 
+    #[cfg(feature = "eframe")]
     impl eframe::Storage for MemStorage {
         fn get_string(&self, key: &str) -> Option<String> {
             self.0.get(key).cloned()
@@ -513,6 +530,7 @@ pub(crate) mod tests {
         std::array::from_fn(|_| presets.next().expect("at least four non-top presets"))
     }
 
+    #[cfg(feature = "eframe")]
     fn temp_theme_file(tag: &str, theme: &SavedTheme) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("egui_theme_kit_init_{tag}_{}", std::process::id()));
@@ -528,6 +546,7 @@ pub(crate) mod tests {
         installed_preset(&ctx)
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn the_startup_order_is_file_store_storage_default_then_shipped() {
         let [file_preset, store_preset, stored_preset, default_preset] = others();
@@ -547,7 +566,13 @@ pub(crate) mod tests {
                     store: Option<&dyn ThemeStore>,
                     storage: Option<&dyn eframe::Storage>,
                     default: Option<&SavedTheme>| {
-            let (theme, source) = startup_theme(storage, file, store, default, &[]);
+            let (theme, source) = startup_theme(
+                &|keys| persist::load_stored_from(storage, keys),
+                file,
+                store,
+                default,
+                &[],
+            );
             (preset_of(theme), source)
         };
 
@@ -584,7 +609,7 @@ pub(crate) mod tests {
         let default = preset_theme(store_preset, Density::Regular);
         let empty = store_with(None);
         let (theme, source) =
-            startup_theme(None, Some(&missing), Some(&empty), Some(&default), &[]);
+            startup_theme(&|_| None, Some(&missing), Some(&empty), Some(&default), &[]);
         assert_eq!(source, ThemeSource::Embedded);
         assert_eq!(preset_of(theme), store_preset);
     }
@@ -595,7 +620,7 @@ pub(crate) mod tests {
         let store = CachedStore::open_lazy(SharedBackend::default());
         store.save_active(&preset_theme(store_preset, Density::Regular));
         let default = preset_theme(default_preset, Density::Regular);
-        let (theme, source) = startup_theme(None, None, Some(&store), Some(&default), &[]);
+        let (theme, source) = startup_theme(&|_| None, None, Some(&store), Some(&default), &[]);
         assert_eq!(source, ThemeSource::Embedded);
         assert_eq!(preset_of(theme), default_preset);
     }
@@ -608,14 +633,14 @@ pub(crate) mod tests {
             pinned.def().expect("built in").id.to_owned(),
         ));
         let ctx = Context::default();
-        init_context(
+        init_ctx(
             &ctx,
-            None,
             KitConfig::new().parse_cli(false).store(Arc::new(store)),
         );
         assert_eq!(installed_preset(&ctx), pinned);
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn legacy_storage_keys_are_read_after_the_current_one_and_removed_on_save() {
         let [preset, ..] = others();
@@ -650,7 +675,7 @@ pub(crate) mod tests {
             .parse_cli(false)
             .default_preset(preset.as_str().to_uppercase())
             .fonts(FontConfig::new().face("probe", &[0, 1, 2, 3]));
-        init_context(&ctx, None, cfg);
+        init_ctx(&ctx, cfg);
 
         assert_eq!(ctx.theme(), Theme::Dark);
         assert_eq!(installed_preset(&ctx), preset);
@@ -674,7 +699,7 @@ pub(crate) mod tests {
             .parse_cli(false)
             .default_preset(first.as_str())
             .default_theme(preset_theme(second, Density::Comfortable));
-        init_context(&ctx, None, cfg);
+        init_ctx(&ctx, cfg);
         assert_eq!(installed_preset(&ctx), second);
         assert_eq!(metrics_density(&ctx), Density::Comfortable);
     }
@@ -686,9 +711,8 @@ pub(crate) mod tests {
     #[test]
     fn an_unknown_default_preset_falls_back_to_the_shipped_default() {
         let ctx = Context::default();
-        init_context(
+        init_ctx(
             &ctx,
-            None,
             KitConfig::new()
                 .parse_cli(false)
                 .default_preset("no such preset"),
@@ -697,6 +721,7 @@ pub(crate) mod tests {
         assert_eq!(persist::source(&ctx), ThemeSource::Embedded);
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn a_ready_empty_store_receives_the_theme_restored_from_eframe_storage() {
         let [preset, ..] = others();
@@ -730,11 +755,7 @@ pub(crate) mod tests {
         let [preset, ..] = others();
         let store = Arc::new(store_with(Some(preset_theme(preset, Density::Regular))));
         let ctx = Context::default();
-        init_context(
-            &ctx,
-            None,
-            KitConfig::new().parse_cli(false).store(store.clone()),
-        );
+        init_ctx(&ctx, KitConfig::new().parse_cli(false).store(store.clone()));
         assert_eq!(installed_preset(&ctx), preset);
         assert_eq!(persist::source(&ctx), ThemeSource::Stored);
         let registered = super::store(&ctx).expect("the store is registered");
@@ -764,9 +785,8 @@ pub(crate) mod tests {
             Density::Regular,
         )))));
         let ctx = Context::default();
-        init_context(
+        init_ctx(
             &ctx,
-            None,
             KitConfig::new().parse_cli(false).legacy_store(old.clone()),
         );
         assert_eq!(installed_preset(&ctx), preset);
@@ -777,6 +797,7 @@ pub(crate) mod tests {
         assert_eq!(preset_of(kept), other);
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn an_app_whose_default_is_not_graphite_keeps_graphite_as_a_real_choice() {
         use super::super::{store::AutoSave, theme_chrome::graphite_theme};
@@ -793,7 +814,7 @@ pub(crate) mod tests {
         let mut storage = MemStorage::default();
 
         let ctx = Context::default();
-        init_context(&ctx, None, config(store.clone()));
+        init_ctx(&ctx, config(store.clone()));
         assert_eq!(installed_preset(&ctx), app_default);
         let mut autosave = AutoSave::new(Duration::ZERO);
         autosave.mark_clean(&ctx);
@@ -824,13 +845,13 @@ pub(crate) mod tests {
         assert!(!themes_equal(&back, &SavedTheme::current(&ctx)));
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn saved_storage_is_cleared_when_the_theme_is_the_configured_default() {
         let [preset, ..] = others();
         let ctx = Context::default();
-        init_context(
+        init_ctx(
             &ctx,
-            None,
             KitConfig::new()
                 .parse_cli(false)
                 .default_preset(preset.as_str()),

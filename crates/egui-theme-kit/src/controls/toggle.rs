@@ -1,6 +1,6 @@
 //! Pill switch and checkbox, each with a trailing label.
 
-use eframe::egui::{
+use egui::{
     Color32, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo, lerp, pos2, vec2,
 };
 

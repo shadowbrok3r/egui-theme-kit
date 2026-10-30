@@ -1,6 +1,6 @@
 //! The Customize section: layout, glass material, accent roles and surface tokens, edited live.
 
-use eframe::egui::{
+use egui::{
     Color32, ComboBox, CornerRadius, DragValue, Grid, RichText, Slider, Stroke, StrokeKind, Ui,
     vec2,
 };
@@ -132,7 +132,7 @@ fn glass_block(ui: &mut Ui, state: &mut PickerState) {
         }
     });
     ui.add_enabled_ui(params.enabled, |ui| {
-        let font = eframe::egui::TextStyle::Body.resolve(ui.style());
+        let font = egui::TextStyle::Body.resolve(ui.style());
         let label_width = ui.fonts_mut(|f| {
             f.layout_no_wrap("Corner radius".into(), font, Color32::WHITE)
                 .size()
@@ -147,7 +147,7 @@ fn glass_block(ui: &mut Ui, state: &mut PickerState) {
             .min_col_width(0.0)
             .spacing(vec2(12.0, 4.0))
             .show(ui, |ui| {
-                ui.add(eframe::egui::Label::new("Blur radius").extend());
+                ui.add(egui::Label::new("Blur radius").extend());
                 ui.add(
                     DragValue::new(&mut params.blur_radius)
                         .range(0.0..=MAX_BLUR)
@@ -155,10 +155,10 @@ fn glass_block(ui: &mut Ui, state: &mut PickerState) {
                         .suffix(" px"),
                 );
                 ui.end_row();
-                ui.add(eframe::egui::Label::new("Tint").extend());
+                ui.add(egui::Label::new("Tint").extend());
                 ui.color_edit_button_srgba(&mut params.tint);
                 ui.end_row();
-                ui.add(eframe::egui::Label::new("Corner radius").extend());
+                ui.add(egui::Label::new("Corner radius").extend());
                 ui.add(
                     DragValue::new(&mut params.corner_radius)
                         .range(0.0..=MAX_CORNER)
@@ -166,7 +166,7 @@ fn glass_block(ui: &mut Ui, state: &mut PickerState) {
                         .suffix(" px"),
                 );
                 ui.end_row();
-                ui.add(eframe::egui::Label::new("Presence").extend());
+                ui.add(egui::Label::new("Presence").extend());
                 ui.add(Slider::new(&mut params.presence, 0.0..=1.0).step_by(0.01));
                 ui.end_row();
             });
@@ -218,8 +218,7 @@ fn color_row(
     compact: bool,
 ) -> Option<Color32> {
     ui.set_min_width(NAME_COL_W);
-    ui.add(eframe::egui::Label::new(name).extend())
-        .on_hover_text(hint);
+    ui.add(egui::Label::new(name).extend()).on_hover_text(hint);
     let mut channels = rgb(current);
     let button = ui.color_edit_button_srgb(&mut channels);
     let outline = Tokens::get(ui.ctx()).text_faint;
@@ -231,7 +230,7 @@ fn color_row(
     );
     let changed = button.changed();
     let hex_label =
-        ui.add(eframe::egui::Label::new(RichText::new(hex(current)).monospace().weak()).extend());
+        ui.add(egui::Label::new(RichText::new(hex(current)).monospace().weak()).extend());
     if compact {
         if let Some(bg) = against {
             hex_label.on_hover_text(format!("Contrast {:.1}:1", contrast(current, bg)));

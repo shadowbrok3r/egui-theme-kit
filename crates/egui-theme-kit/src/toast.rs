@@ -1,6 +1,6 @@
 //! Theme-native look for `egui-toast` notifications, registered through its custom-contents hook.
 
-use eframe::egui::{
+use egui::{
     Button, Color32, CornerRadius, CursorIcon, Frame, Margin, Response, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2, epaint::RectShape,
 };
@@ -94,7 +94,7 @@ fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast, tone: Color32) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Align2, Area, Context, Order, Pos2, RawInput, Rect, vec2};
+    use egui::{Align2, Area, Context, Order, Pos2, RawInput, Rect, vec2};
     use egui_toast::ToastOptions;
 
     fn run_frame(ctx: &Context, toasts: &mut Toasts) {
@@ -103,7 +103,7 @@ mod tests {
             ..Default::default()
         };
         ctx.run_ui(input, |ui| {
-            Area::new(eframe::egui::Id::unique("toast_test"))
+            Area::new(egui::Id::unique("toast_test"))
                 .order(Order::Foreground)
                 .anchor(Align2::LEFT_TOP, vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| toasts.show(ui));
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn every_kind_has_a_distinct_tone_from_the_tokens() {
         let t = Tokens::derive(
-            &eframe::egui::Style::default(),
+            &egui::Style::default(),
             Color32::from_rgb(10, 200, 10),
             Color32::from_rgb(200, 10, 200),
         );
@@ -139,10 +139,8 @@ mod tests {
         }
         run_frame(&ctx, &mut toasts);
         run_frame(&ctx, &mut toasts);
-        let shown: Vec<Toast> = ctx.data(|d| {
-            d.get_temp(eframe::egui::Id::unique("__toasts"))
-                .unwrap_or_default()
-        });
+        let shown: Vec<Toast> =
+            ctx.data(|d| d.get_temp(egui::Id::unique("__toasts")).unwrap_or_default());
         assert_eq!(shown.len(), KINDS.len());
     }
 }

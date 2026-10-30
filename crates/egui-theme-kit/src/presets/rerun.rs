@@ -1,6 +1,6 @@
 //! Rerun-inspired palettes: neutral greys under a pink accent.
 
-use eframe::egui::Color32;
+use egui::Color32;
 
 use super::palette::Palette;
 

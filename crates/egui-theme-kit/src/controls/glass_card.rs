@@ -1,6 +1,6 @@
 //! Themed card surfaces that frost their own backdrop on glass presets.
 
-use eframe::egui::{
+use egui::{
     Align, AsIdSalt, Color32, CornerRadius, Frame, InnerResponse, Layout, Margin, Rangef, Rect,
     Response, RichText, Sense, Shape, Stroke, Ui, UiBuilder, UiKind, UiStackInfo,
     epaint::MarginF32, layers::ShapeIdx, pos2, vec2,
@@ -246,7 +246,7 @@ pub fn card_header(
 mod tests {
     use super::*;
     use crate::presets::{MATCHABLE_PRESETS, PresetStyles, style_for_preset};
-    use eframe::egui::Context;
+    use egui::Context;
 
     fn with_preset<R>(preset: PresetStyles, f: impl FnOnce(&mut Ui) -> R) -> R {
         let ctx = Context::default();

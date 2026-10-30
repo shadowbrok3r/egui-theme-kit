@@ -5,7 +5,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 
 use log::SetLoggerError;
 
-use eframe::egui::{Align, Color32, FontSelection, RichText, Style, text::LayoutJob};
+use egui::{Align, Color32, FontSelection, RichText, Style, text::LayoutJob};
 use regex::{Regex, RegexBuilder};
 
 use crate::controls::{self, BarKind, Icon, IconBox, MenuButton, Metrics, icons};
@@ -232,7 +232,7 @@ impl LoggerUi {
     }
 
     /// Draws the viewer with state shared process-wide, seeded from this builder on first use.
-    pub fn show(self, ui: &mut eframe::egui::Ui) {
+    pub fn show(self, ui: &mut egui::Ui) {
         if let Ok(ref mut logger_ui) = self.log_ui().lock() {
             logger_ui.ui(ui);
         } else {
@@ -247,11 +247,11 @@ impl LoggerUi {
     }
 
     /// Draws the viewer with state owned by this value.
-    pub fn show_mut(&mut self, ui: &mut eframe::egui::Ui) {
+    pub fn show_mut(&mut self, ui: &mut egui::Ui) {
         self.ui(ui);
     }
 
-    pub(crate) fn ui(&mut self, ui: &mut eframe::egui::Ui) {
+    pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
         self.style.warn_color = crate::colors::warn(ui);
         self.style.error_color = crate::colors::error(ui);
         self.style.highlight_color = crate::colors::weak_text(ui);
@@ -337,7 +337,7 @@ impl LoggerUi {
             }
 
             if self.style.enable_max_log_output {
-                ui.with_layout(eframe::egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     controls::value_field(
                         ui,
                         &mut self.max_log_length,
@@ -413,7 +413,7 @@ impl LoggerUi {
             .filter(|record| !matches!(logger.categories.get(&record.target), Some(false)))
             .collect();
 
-        eframe::egui::ScrollArea::vertical()
+        egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .max_height(ui.available_height() - m.header_h - ui.spacing().item_spacing.y)
             .show(ui, |ui| {
@@ -459,7 +459,7 @@ impl LoggerUi {
                 controls::icon_label(ui, icons::SEARCH, &format!("Displayed: {logs_displayed}"));
             }
             if self.style.enable_copy_button {
-                ui.with_layout(eframe::egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     if controls::icon_text_button(ui, icons::COPY, "Copy")
                         .on_hover_text("Copy the retained log")
                         .clicked()
@@ -885,7 +885,7 @@ mod tests {
     use crate::fonts;
     use crate::metrics::{self, Density};
     use crate::presets::{MATCHABLE_PRESETS, apply_preset, bootstrap_startup_theme, set_density};
-    use eframe::egui::{CentralPanel, Context, Pos2, RawInput, Rect, vec2};
+    use egui::{CentralPanel, Context, Pos2, RawInput, Rect, vec2};
     use log::Log;
 
     fn record(level: log::Level, target: &str, message: &str) -> Record {
@@ -971,11 +971,11 @@ mod tests {
 
     fn context(density: Density) -> Context {
         let ctx = Context::default();
-        let mut definitions = eframe::egui::FontDefinitions::default();
+        let mut definitions = egui::FontDefinitions::default();
         fonts::install(&mut definitions);
         ctx.set_fonts(definitions);
         metrics::set_density(&ctx, density);
-        metrics::install_overlaid_style(&ctx, eframe::egui::Style::default());
+        metrics::install_overlaid_style(&ctx, egui::Style::default());
         ctx
     }
 

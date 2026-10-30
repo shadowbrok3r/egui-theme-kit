@@ -2,7 +2,7 @@
 
 use std::ops::RangeInclusive;
 
-use eframe::egui::{
+use egui::{
     Align, Align2, AsIdSalt, Atom, Color32, CornerRadius, DragValue, EventFilter, Frame, Id,
     IdSalt, Key, Layout, Margin, Popup, PopupCloseBehavior, Rect, Response, Role, ScrollArea,
     Sense, Shape, Stroke, StrokeKind, TextBuffer, TextEdit, TextStyle, Ui, UiBuilder, Vec2,

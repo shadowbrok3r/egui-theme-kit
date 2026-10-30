@@ -1,6 +1,6 @@
 //! Control colour rules, weights and button kinds the widget theme paints stock egui widgets with.
 
-use eframe::egui::{
+use egui::{
     Button, Color32, Context, FontFamily, FontId, Id, Stroke, Style, TextStyle, class::ClassName,
 };
 
@@ -71,8 +71,8 @@ impl ButtonKind {
 }
 
 /// A stock egui button of `kind`.
-pub fn button(kind: ButtonKind, text: impl Into<eframe::egui::WidgetText>) -> Button<'static> {
-    use eframe::egui::class::HasClasses as _;
+pub fn button(kind: ButtonKind, text: impl Into<egui::WidgetText>) -> Button<'static> {
+    use egui::class::HasClasses as _;
     let button = Button::new(text);
     match kind.class() {
         Some(class) => button.with_class(class),
@@ -81,17 +81,17 @@ pub fn button(kind: ButtonKind, text: impl Into<eframe::egui::WidgetText>) -> Bu
 }
 
 /// A primary-filled stock button.
-pub fn primary_button(text: impl Into<eframe::egui::WidgetText>) -> Button<'static> {
+pub fn primary_button(text: impl Into<egui::WidgetText>) -> Button<'static> {
     button(ButtonKind::Primary, text)
 }
 
 /// An error-tinted stock button.
-pub fn danger_button(text: impl Into<eframe::egui::WidgetText>) -> Button<'static> {
+pub fn danger_button(text: impl Into<egui::WidgetText>) -> Button<'static> {
     button(ButtonKind::Danger, text)
 }
 
 /// A transparent-until-hovered stock button.
-pub fn ghost_button(text: impl Into<eframe::egui::WidgetText>) -> Button<'static> {
+pub fn ghost_button(text: impl Into<egui::WidgetText>) -> Button<'static> {
     button(ButtonKind::Ghost, text)
 }
 

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "files")]
-use eframe::egui::Context;
+use egui::Context;
 
 use crate::saved::{SavedTheme, theme_to_json};
 

@@ -1,6 +1,6 @@
 //! The saved-themes list: apply, save over, rename, duplicate, delete and pin a startup theme.
 
-use eframe::egui::{Frame, Key, RichText, Sense, TextEdit, Ui, vec2};
+use egui::{Frame, Key, RichText, Sense, TextEdit, Ui, vec2};
 
 use super::{
     age, label,

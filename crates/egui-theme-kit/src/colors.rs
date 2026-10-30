@@ -1,6 +1,6 @@
 //! Semantic color accessors backed by the active egui theme.
 
-use eframe::egui::{Color32, Context, Id, Ui};
+use egui::{Color32, Context, Id, Ui};
 
 use super::tokens::Tokens;
 

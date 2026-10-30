@@ -1,6 +1,6 @@
 //! Selection and focus colors for `egui-data-table`, derived from the published tokens.
 
-use eframe::egui::Context;
+use egui::Context;
 
 use super::tokens::{Tokens, mix};
 

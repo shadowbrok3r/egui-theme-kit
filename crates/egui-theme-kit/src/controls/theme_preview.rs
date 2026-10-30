@@ -1,6 +1,6 @@
 //! A mock window painted from a theme's tokens.
 
-use eframe::egui::{
+use egui::{
     CornerRadius, Rect, Response, Sense, Stroke, StrokeKind, TextStyle, Ui, Vec2, pos2, vec2,
 };
 

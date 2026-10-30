@@ -2,9 +2,7 @@
 
 use std::time::Duration;
 
-use eframe::egui::{
-    CentralPanel, Color32, Context, FullOutput, Id, Pos2, RawInput, Rect, Shape, vec2,
-};
+use egui::{CentralPanel, Color32, Context, FullOutput, Id, Pos2, RawInput, Rect, Shape, vec2};
 
 use super::{
     MessageKind, Origin, PickerOptions, PickerState,
@@ -736,7 +734,7 @@ fn the_window_uses_the_caller_id_so_two_pickers_can_coexist() {
 fn a_theme_the_kit_applies_from_the_store_becomes_the_origin_without_a_save() {
     use crate::{
         KitConfig,
-        startup::init_context,
+        startup::init_ctx,
         store::{
             CachedStore,
             testing::{SharedBackend, connect},
@@ -746,11 +744,7 @@ fn a_theme_the_kit_applies_from_the_store_becomes_the_origin_without_a_save() {
     let backend = SharedBackend::default();
     let store = std::sync::Arc::new(CachedStore::open_lazy(backend.clone()));
     let ctx = Context::default();
-    init_context(
-        &ctx,
-        None,
-        KitConfig::new().parse_cli(false).store(store.clone()),
-    );
+    init_ctx(&ctx, KitConfig::new().parse_cli(false).store(store.clone()));
     let mut state = PickerState::default();
     run(&ctx, &mut state, &*store);
     assert_eq!(state.origin(), Some(&Origin::Preset("graphite")));

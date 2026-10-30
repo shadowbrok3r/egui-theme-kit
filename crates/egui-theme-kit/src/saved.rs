@@ -1,7 +1,7 @@
 //! A saved theme: the egui `Style` plus the parts of a theme with no `Style` slot, and its JSON forms.
 
 use anyhow::Context as _;
-use eframe::egui::{Color32, Context, FontFamily, Style};
+use egui::{Color32, Context, FontFamily, Style};
 
 use super::{
     colors,
@@ -177,7 +177,7 @@ fn merge_over_default(default: serde_json::Value, stored: serde_json::Value) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Color32, TextStyle};
+    use egui::{Color32, TextStyle};
 
     fn sample() -> SavedTheme {
         let mut style = Style::default();

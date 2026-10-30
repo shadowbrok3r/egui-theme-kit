@@ -34,7 +34,7 @@ A theme and styling system for [egui](https://github.com/emilk/egui) apps, insta
 egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit" }
 ```
 
-Requires Rust 1.95 or newer (edition 2024), egui and eframe 0.37. The `egui_dock`, `egui-data-table` and `egui-toast` features pull the author's forks of those crates (branch `egui-037`) from Git, so the dependency is not publishable to crates.io.
+Requires Rust 1.95 or newer (edition 2024) and egui 0.37 (eframe 0.37 with the `eframe` feature). The `egui_dock`, `egui-data-table` and `egui-toast` features pull the author's forks of those crates (branch `egui-037`) from Git, so the dependency is not publishable to crates.io.
 
 Pin a revision for reproducible builds:
 
@@ -46,21 +46,22 @@ egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev =
 
 | Feature | Default | Adds |
 |---|---|---|
-| `glass` | yes | enables eframe's `glow` feature so `init` builds the blur backend from `cc.gl` at startup; also builds the backend on iOS and wasm32 |
+| `eframe` | yes | `init(cc)`, `init_context`, `save`, `EframeStorageStore` and the other eframe-storage functions, `glass::install`, and the blur backend that adopts eframe's glow context |
+| `glass` | yes | implies `eframe` and enables eframe's `glow` feature so `init` builds the blur backend from `cc.gl` at startup; also builds the backend on iOS and wasm32 |
 | `files` | yes | native import/export dialogs (`rfd`) and the user theme directory (`directories`) |
 | `dock` | yes | `dock_style` for `egui_dock` |
 | `toast` | yes | themed `egui-toast` notifications and the panel's toast tester |
 | `data-table` | yes | `table_style` selection colors for `egui-data-table` |
 | `picker` | yes | the theme picker window |
 | `controls` | no | painted control kit (buttons, toggles, fields, list rows, meters, glass card) |
-| `title-bar` | no | custom window title bar with caption buttons, drag area and resize edges, the saved custom-or-system choice (`chrome`) and the Windows client-area fix (implies `controls`) |
+| `title-bar` | no | custom window title bar with caption buttons, drag area and resize edges, the saved custom-or-system choice (`chrome`) and the Windows client-area fix (implies `eframe` and `controls`) |
 | `logger` | no | in-app log viewer (implies `controls`) |
 
-The defaults match the author's apps, which use every one of these companions. For a smaller dependency tree use `default-features = false` and enable what you need; the core (tokens, metrics, fonts, widget theme, presets, saved themes, debug panel) needs only `egui`, `eframe`, `egui_extras` and a few small crates (`serde`, `serde_json`, `anyhow`, `log`).
+The defaults match the author's apps, which use every one of these companions. For a smaller dependency tree use `default-features = false` and enable what you need; the core (tokens, metrics, fonts, widget theme, presets, saved themes, debug panel) needs only `egui`, `egui_extras` and a few small crates (`serde`, `serde_json`, `anyhow`, `log`). An eframe app adds `eframe` (or `glass`, which implies it) for `init(cc)` and eframe storage.
 
 `glass` turns on eframe's `glow` feature, which changes the signature of `eframe::App::on_exit`. An app on the wgpu backend should build with `default-features = false`.
 
-The blur backend itself is built on every target except iOS and wasm32, whatever the features: without `glass`, it adopts the GL context of the first glow paint that frosts, so an app on glow gets the blur with `default-features = false` too.
+With `eframe`, the blur backend itself is built on every target except iOS and wasm32: without `glass`, it adopts the GL context of the first glow paint that frosts, so an eframe app on glow gets the blur from `features = ["eframe"]` too. Without `eframe` no backend is built and glass surfaces paint the tint only.
 
 ## Quick start
 
@@ -116,6 +117,29 @@ The per-frame calls are optional: skip `glass::*` and the panel timings if you u
 cargo run -p egui-theme-kit --example basic
 cargo run -p egui-theme-kit --example basic -- --theme-panel
 ```
+
+## Bevy and other hosts
+
+Without the `eframe` feature the kit builds on egui alone, so it runs under [bevy_egui](https://github.com/vladbat00/bevy_egui) or any custom loop on egui 0.37, Android included:
+
+```toml
+egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev = "<commit>", default-features = false, features = ["controls", "picker", "toast"] }
+```
+
+```rust
+use std::sync::Arc;
+use egui_theme_kit::{KitConfig, store::CachedStore};
+
+// Once, before the first pass of the primary context; `ThemeFile` implements `store::ThemeBackend`.
+let store = Arc::new(CachedStore::open(ThemeFile::new(config_dir.join("ui_theme.json"))));
+egui_theme_kit::init_ctx(&ctx, KitConfig::new().parse_cli(false).store(store.clone()));
+```
+
+- `init_ctx(ctx, cfg)` is `init` without eframe: command-line options (unless `parse_cli(false)`), fonts, the startup theme and the store poll. The startup order is the one in "Persistence and startup order" without eframe storage, so persist through a `ThemeStore` (`CachedStore` over your backend, `MemoryStore`, or `JsonDirStore` with `files`) and bound the exit flush with `CachedStore::flush_within`.
+- The kit's per-pass plugins run inside `Context::run_ui`, which bevy_egui calls every pass.
+- No blur backend is built: glass surfaces paint the tint only and `glass::support()` is `NotBuilt`. Pass `PickerOptions::glass_available: Some(|| false)` so the picker says so.
+- Not available without eframe: `init(cc)`, `init_context`, `save`, `EframeStorageStore`, `persist::load_stored`/`resolve_in` (use `persist::resolve_file_in`), `glass::install` and the `title-bar` feature, whose viewport commands bevy_egui does not carry out.
+- Android hosts leave out `files` (no `rfd`); the eframe-free features check for `aarch64-linux-android`.
 
 ## Theming concepts
 
@@ -349,7 +373,12 @@ cargo test -p egui-theme-kit --all-targets --no-default-features
 cargo test -p egui-theme-kit --all-targets --all-features
 ```
 
-Use `--all-targets`: eframe needs a windowing feature on Linux, which the dev-dependencies enable, so a bare `cargo check -p egui-theme-kit --lib` does not build outside an app that depends on eframe with its platform features.
+Use `--all-targets` with the `eframe` feature: eframe needs a windowing feature on Linux, which the dev-dependencies enable, so a bare `cargo check -p egui-theme-kit --lib` does not build outside an app that depends on eframe with its platform features. Without it the library checks on its own, also for Android:
+
+```sh
+cargo check -p egui-theme-kit --lib --no-default-features --features controls,picker,toast
+cargo check -p egui-theme-kit --lib --no-default-features --features controls,picker,toast --target aarch64-linux-android
+```
 
 ## License
 

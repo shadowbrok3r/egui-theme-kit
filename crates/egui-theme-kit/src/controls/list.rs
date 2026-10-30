@@ -1,6 +1,6 @@
 //! Selectable list and tree rows with a leading icon.
 
-use eframe::egui::{
+use egui::{
     AsIdSalt, Color32, IdSalt, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo,
     collapsing_header::CollapsingState, pos2, vec2,
 };

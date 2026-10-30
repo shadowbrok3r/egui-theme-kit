@@ -10,9 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use eframe::egui::{
-    Context, Id, Response, Sense, Ui, Vec2, ViewportBuilder, ViewportCommand, vec2,
-};
+use egui::{Context, Id, Response, Sense, Ui, Vec2, ViewportBuilder, ViewportCommand, vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::controls::{menu_inset_row, toggle};
@@ -260,7 +258,7 @@ mod tests {
         fonts,
         metrics::{self, Density},
     };
-    use eframe::egui::{
+    use egui::{
         Event, FontDefinitions, Modifiers, PointerButton, Pos2, RawInput, Rect, Style, ViewportId,
     };
     use std::sync::Mutex;

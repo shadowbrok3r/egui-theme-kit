@@ -1,7 +1,7 @@
 //! Studio: opaque near-black surfaces, one fill per widget state, and three accent roles.
 
-use eframe::egui::style::{HandleShape, Selection, TextCursorStyle, WidgetVisuals, Widgets};
-use eframe::egui::{Color32, CornerRadius, Shadow, Stroke, Style, Visuals};
+use egui::style::{HandleShape, Selection, TextCursorStyle, WidgetVisuals, Widgets};
+use egui::{Color32, CornerRadius, Shadow, Stroke, Style, Visuals};
 
 use super::glass::GlassParams;
 use super::tokens::Tokens;

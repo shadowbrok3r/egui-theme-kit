@@ -1,6 +1,6 @@
 //! Small icon set the kit paints with vector strokes, so controls need no icon font or image loader.
 
-use eframe::egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, vec2};
+use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, vec2};
 
 use super::Icon;
 
@@ -313,7 +313,7 @@ fn clock(p: &Painter, r: Rect, c: Color32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Context, pos2};
+    use egui::{Context, pos2};
 
     fn shape_count(icon: Icon, side: f32) -> usize {
         let ctx = Context::default();

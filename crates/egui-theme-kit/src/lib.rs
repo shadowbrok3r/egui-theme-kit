@@ -63,25 +63,28 @@
 //! runs every pass: it applies the store's theme when the store becomes ready (unless the user already
 //! changed the theme) and again when the store's active theme changes elsewhere; a `--theme` file theme is
 //! never replaced. [`save`] writes the live theme back to eframe storage and skips the write while the
-//! theme equals the default of the context or came from a `--theme` file.
+//! theme equals the default of the context or came from a `--theme` file. [`init_ctx`] is the same
+//! startup without eframe storage, for bevy_egui and other hosts.
 //!
 //! # Cargo features
 //!
 //! | Feature | Default | Adds |
 //! |---|---|---|
-//! | `glass` | yes | eframe's `glow`, so `init` builds the blur backend from `cc.gl`; the backend on iOS and wasm32 |
+//! | `eframe` | yes | `init`, `init_context`, `save`, eframe-storage persistence and the blur backend that adopts eframe's glow context |
+//! | `glass` | yes | `eframe` and its `glow`, so `init` builds the blur backend from `cc.gl`; the backend on iOS and wasm32 |
 //! | `files` | yes | native import/export dialogs and the user theme directory |
 //! | `dock` | yes | `dock_style` for `egui_dock` |
 //! | `toast` | yes | themed `egui-toast` notifications and the panel's toast tester |
 //! | `data-table` | yes | `table_style` selection colors for `egui-data-table` |
 //! | `picker` | yes | the theme picker window |
 //! | `controls` | no | themed control widgets |
-//! | `title-bar` | no | app-drawn window title bar, caption buttons, resize edges, `chrome` preferences and the Windows client-area fix |
+//! | `title-bar` | no | app-drawn window title bar, caption buttons, resize edges, `chrome` preferences and the Windows client-area fix; implies `eframe` |
 //! | `logger` | no | in-app log viewer |
 //!
-//! With `default-features = false` the core remains: tokens, metrics, fonts, the widget theme,
-//! presets, saved themes and the debug panel. The blur backend is built on every target except iOS
-//! and wasm32 regardless; without `glass` it adopts the GL context of the first glow paint.
+//! With `default-features = false` the core remains on egui alone: tokens, metrics, fonts, the widget
+//! theme, presets, saved themes and the debug panel, installed by [`init_ctx`]. With `eframe` the blur
+//! backend is built on every target except iOS and wasm32; without `glass` it adopts the GL context of
+//! the first glow paint. Without `eframe` no backend is built and glass surfaces paint the tint only.
 
 #[cfg(feature = "picker")]
 pub mod appearance;
@@ -109,10 +112,10 @@ pub mod store;
 pub mod studio;
 #[cfg(feature = "data-table")]
 pub mod table_style;
-#[cfg(feature = "toast")]
-pub mod toast;
 #[cfg(feature = "title-bar")]
 pub mod title_bar;
+#[cfg(feature = "toast")]
+pub mod toast;
 pub mod tokens;
 pub mod widget_theme;
 
@@ -123,7 +126,7 @@ pub mod picker;
 mod tests;
 mod theme_chrome;
 
-use eframe::egui::Context;
+use egui::Context;
 
 pub use colors::{
     Status, StatusStyle, accent, accent_secondary, accent_secondary_ctx, bg_extreme, bg_faint,
@@ -133,14 +136,17 @@ pub use colors::{
     usage_status, warn, weak_text,
 };
 pub use fonts::{FontConfig, FontFace, TextScale};
-pub use startup::{KitConfig, init, init_context};
 pub use kit::{ButtonKind, danger_button, ghost_button, primary_button};
 pub use metrics::{Density, Metrics};
 pub use presets::{PresetStyles, apply_preset, apply_saved_theme, bootstrap_startup_theme};
 pub use saved::SavedTheme;
+pub use startup::{KitConfig, init_ctx};
+#[cfg(feature = "eframe")]
+pub use startup::{init, init_context};
 pub use tokens::Tokens;
 
 /// The config the deprecated bootstrap functions apply: defaults, with the process arguments left unread.
+#[cfg(feature = "eframe")]
 fn legacy_config() -> KitConfig {
     KitConfig {
         parse_cli: false,
@@ -149,6 +155,7 @@ fn legacy_config() -> KitConfig {
 }
 
 /// Installs glass, fonts and the startup theme (`--theme` file, saved theme or embedded default) from the creation context.
+#[cfg(feature = "eframe")]
 #[deprecated(note = "use `init` with a `KitConfig`")]
 pub fn bootstrap(cc: &eframe::CreationContext<'_>) {
     glass::install(cc);
@@ -156,13 +163,14 @@ pub fn bootstrap(cc: &eframe::CreationContext<'_>) {
 }
 
 /// [`bootstrap`] without the GL backend: fonts and the startup theme on `ctx`.
+#[cfg(feature = "eframe")]
 #[deprecated(note = "use `init_context` with a `KitConfig`")]
 pub fn bootstrap_context(ctx: &Context, storage: Option<&dyn eframe::Storage>) {
     init_context(ctx, storage, legacy_config());
 }
 
 /// Replaces the context options with `options`, keeping the installed styles and theme preference.
-pub fn apply_preferences(ctx: &Context, options: eframe::egui::Options) {
+pub fn apply_preferences(ctx: &Context, options: egui::Options) {
     ctx.options_mut(|o| {
         let (dark, light) = (o.dark_style.clone(), o.light_style.clone());
         let (preference, fallback) = (o.theme_preference, o.fallback_theme);
@@ -204,6 +212,7 @@ pub fn dock_style(ctx: &Context) -> egui_dock::Style {
 ///
 /// Nothing is written while the theme came from a `--theme` file, and the entry is removed while the
 /// theme equals the default of the context (see [`persist::default_theme_in`]).
+#[cfg(feature = "eframe")]
 pub fn save(ctx: &Context, storage: &mut dyn eframe::Storage) {
     persist::save(ctx, storage);
 }

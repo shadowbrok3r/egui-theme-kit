@@ -12,7 +12,9 @@ categories = ["gui"]
 publish = false
 
 [features]
-default = ["glass", "files", "dock", "toast", "data-table", "picker"]
+default = ["eframe", "glass", "files", "dock", "toast", "data-table", "picker"]
+# eframe integration: `init(cc)`, eframe-storage persistence and the blur backend that adopts eframe's glow context.
+eframe = ["dep:eframe", "dep:backdrop-blur-egui", "dep:egui_glow"]
 # egui_dock chrome built from the tokens (`dock_style`).
 dock = ["dep:egui_dock"]
 # egui-data-table selection colors (`table_style`).
@@ -20,21 +22,21 @@ data-table = ["dep:egui-data-table"]
 # egui-toast notifications in the kit look (`toast`, the debug panel's toast tester).
 toast = ["dep:egui-toast"]
 # eframe's glow renderer, so `init` builds the blur backend from `cc.gl`; also builds the backend on iOS and wasm32.
-glass = ["dep:backdrop-blur-egui", "dep:egui_glow", "eframe/glow"]
+glass = ["eframe", "eframe/glow"]
 # Native file dialogs and the user config directory for theme import and export.
 files = ["dep:rfd", "dep:directories"]
 # Themed control widgets.
 controls = []
-# Custom window title bar with caption buttons, window chrome preferences and the Windows client-area fix.
-title-bar = ["controls", "dep:windows", "dep:raw-window-handle"]
+# Custom window title bar with caption buttons, window chrome preferences and the Windows client-area fix; eframe only, since other hosts drop viewport commands.
+title-bar = ["eframe", "controls", "dep:windows", "dep:raw-window-handle"]
 # In-app log viewer.
 logger = ["controls", "dep:chrono", "dep:regex"]
 # Theme picker window and preset browser.
 picker = []
 
 [dependencies]
-eframe = { workspace = true, features = ["default_fonts", "persistence", "serde"] }
-egui = { workspace = true, features = ["experimental"] }
+eframe = { workspace = true, features = ["default_fonts", "persistence", "serde"], optional = true }
+egui = { workspace = true, features = ["experimental", "serde", "default_fonts"] }
 egui_extras.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -50,11 +52,6 @@ directories = { version = "6", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 regex = { version = "1", optional = true }
 
-# The blur backend wherever eframe can run glow; it adopts the GL context of the first glow paint.
-[target.'cfg(not(any(target_os = "ios", target_arch = "wasm32")))'.dependencies]
-backdrop-blur-egui = { path = "../backdrop-blur-egui", default-features = false, features = ["grab-pass"] }
-egui_glow.workspace = true
-
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = { version = "0.6", optional = true }
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"], optional = true }
@@ -67,16 +64,24 @@ regex = "1"
 
 [[example]]
 name = "picker"
-required-features = ["picker", "files"]
+required-features = ["eframe", "picker", "files"]
 
 [[example]]
 name = "glass_popups"
-required-features = ["glass", "picker"]
+required-features = ["eframe", "glass", "picker"]
 
 [[example]]
 name = "controls"
-required-features = ["controls", "title-bar", "logger"]
+required-features = ["eframe", "controls", "title-bar", "logger"]
 
 [[example]]
 name = "frameless"
-required-features = ["title-bar", "controls", "files", "picker"]
+required-features = ["eframe", "title-bar", "controls", "files", "picker"]
+
+[[example]]
+name = "basic"
+required-features = ["eframe"]
+
+[[example]]
+name = "late_store"
+required-features = ["eframe"]

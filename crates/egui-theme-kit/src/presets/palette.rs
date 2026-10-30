@@ -1,7 +1,7 @@
 //! Palette presets: a flat colour spec painted onto an existing chrome without touching geometry or fonts.
 
-use eframe::egui::style::WidgetVisuals;
-use eframe::egui::{Color32, Stroke, Style};
+use egui::style::WidgetVisuals;
+use egui::{Color32, Stroke, Style};
 
 use crate::tokens::mix;
 

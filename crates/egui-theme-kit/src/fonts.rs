@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
 
-use eframe::egui::{Context, FontData, FontDefinitions, FontFamily, FontId, Id, RichText};
+use egui::{Context, FontData, FontDefinitions, FontFamily, FontId, Id, RichText};
 
 /// `font_data` key of Inter Regular, the first face of `Proportional`.
 pub const INTER: &str = "Inter";
@@ -233,7 +233,7 @@ fn drop_unknown_faces(fonts: &mut FontDefinitions) {
 /// Plugin that keeps the context's [`FontConfig`] out of egui memory so a memory reset leaves it.
 struct ConfigSlot(FontConfig);
 
-impl eframe::egui::Plugin for ConfigSlot {
+impl egui::Plugin for ConfigSlot {
     fn debug_name(&self) -> &'static str {
         "egui_theme_kit::fonts::ConfigSlot"
     }
@@ -378,7 +378,7 @@ pub fn apply_scale(ctx: &Context, scale: TextScale) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::epaint::text::{Fonts, TextOptions};
+    use egui::epaint::text::{Fonts, TextOptions};
 
     const PUA: std::ops::RangeInclusive<u32> = 0xE000..=0xF8FF;
 

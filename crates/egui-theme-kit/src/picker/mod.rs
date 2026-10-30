@@ -28,7 +28,7 @@ mod library;
 mod state;
 mod transfer;
 
-use eframe::egui::{Context, Id, RichText, ScrollArea, Ui, Window, vec2};
+use egui::{Context, Id, RichText, ScrollArea, Ui, Window, vec2};
 
 pub use gallery::PresetGallery;
 pub use state::{DEFAULT_TITLE, Message, MessageKind, Origin, PickerOptions, PickerState};
@@ -101,7 +101,7 @@ pub fn window(ctx: &Context, state: &mut PickerState, store: &dyn ThemeStore) {
 
 fn section(ui: &mut Ui, title: &str, open: bool, add: impl FnOnce(&mut Ui)) {
     ui.add_space(ui.spacing().item_spacing.y);
-    eframe::egui::CollapsingHeader::new(RichText::new(title).semibold())
+    egui::CollapsingHeader::new(RichText::new(title).semibold())
         .id_salt(("egui_theme_kit.picker.section", title))
         .default_open(open)
         .show(ui, add);

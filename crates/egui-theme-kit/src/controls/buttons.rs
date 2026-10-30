@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{
+use egui::{
     Color32, FontId, Galley, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo, pos2,
     vec2,
 };
@@ -372,7 +372,7 @@ mod max_width_tests {
     use super::*;
     use crate::controls::icons;
     use crate::metrics::{self, Density};
-    use eframe::egui::{CentralPanel, Context, FontDefinitions, Pos2, RawInput, Style};
+    use egui::{CentralPanel, Context, FontDefinitions, Pos2, RawInput, Style};
 
     fn context() -> Context {
         let ctx = Context::default();

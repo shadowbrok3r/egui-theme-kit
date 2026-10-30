@@ -1,6 +1,6 @@
 //! Opaque colour roles and radii resolved from the installed theme.
 
-use eframe::egui::{Color32, Context, Id, Style, Visuals, style::WidgetVisuals};
+use egui::{Color32, Context, Id, Style, Visuals, style::WidgetVisuals};
 
 use super::colors;
 

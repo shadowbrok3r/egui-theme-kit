@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use eframe::egui::class::HasClasses as _;
-use eframe::egui::{
+use egui::class::HasClasses as _;
+use egui::{
     self, CollapsingHeader, Color32, ComboBox, Context, DragValue, Grid, Id, Key, KeyboardShortcut,
     Modifiers, ProgressBar, RichText, ScrollArea, Sense, Slider, Spinner, Stroke, StrokeKind,
     TextEdit, TextStyle, Ui, Vec2, Window, vec2,
@@ -1001,7 +1001,7 @@ fn toast_section(ui: &mut Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{CentralPanel, Pos2, RawInput, Rect};
+    use egui::{CentralPanel, Pos2, RawInput, Rect};
 
     #[cfg(feature = "files")]
     use super::super::presets::PresetStyles;
@@ -1092,9 +1092,8 @@ mod tests {
     fn the_store_registered_at_init_backs_the_panel_until_set_store_overrides_it() {
         let registered: Arc<dyn ThemeStore> = Arc::new(MemoryStore::default());
         let ctx = Context::default();
-        crate::startup::init_context(
+        crate::startup::init_ctx(
             &ctx,
-            None,
             crate::KitConfig::new()
                 .parse_cli(false)
                 .store(Arc::clone(&registered)),

@@ -1,9 +1,9 @@
 //! Neon glass family: AMOLED-black base, translucent accent panes and glowing edges generated from one [`NeonPalette`].
 
-use eframe::egui::style::{
+use egui::style::{
     HandleShape, ImeComposition, Selection, TextCursorStyle, WidgetVisuals, Widgets,
 };
-use eframe::egui::{Color32, CornerRadius, Shadow, Stroke, Style, Visuals};
+use egui::{Color32, CornerRadius, Shadow, Stroke, Style, Visuals};
 
 use crate::glass::GlassParams;
 use crate::glass_material::{

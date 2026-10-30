@@ -1,6 +1,6 @@
 //! Tokyo Night palettes.
 
-use eframe::egui::Color32;
+use egui::Color32;
 
 use super::palette::Palette;
 

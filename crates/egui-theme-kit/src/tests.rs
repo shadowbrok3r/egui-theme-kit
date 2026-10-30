@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use eframe::egui::{
+use egui::{
     Button, CentralPanel, ComboBox, Context, DragValue, Pos2, RawInput, Rect, TextEdit, Ui, vec2,
 };
 use regex::Regex;
@@ -102,9 +102,9 @@ fn stock_controls_share_the_control_height_and_centre_line_for_every_preset_and_
 fn init_pins_the_dark_slot_and_applies_the_shipped_default() {
     let reference = context();
     let ctx = Context::default();
-    ctx.set_theme(eframe::egui::Theme::Light);
-    super::init_context(&ctx, None, super::KitConfig::new().parse_cli(false));
-    assert_eq!(ctx.theme(), eframe::egui::Theme::Dark);
+    ctx.set_theme(egui::Theme::Light);
+    super::init_ctx(&ctx, super::KitConfig::new().parse_cli(false));
+    assert_eq!(ctx.theme(), egui::Theme::Dark);
     assert_eq!(installed_preset(&ctx), installed_preset(&reference));
     assert_eq!(Tokens::get(&ctx), Tokens::get(&reference));
     assert_eq!(
@@ -113,11 +113,12 @@ fn init_pins_the_dark_slot_and_applies_the_shipped_default() {
     );
 }
 
+#[cfg(feature = "eframe")]
 #[test]
 #[allow(deprecated)]
 fn the_deprecated_bootstrap_matches_init_with_defaults() {
     let reference = Context::default();
-    super::init_context(&reference, None, super::KitConfig::new().parse_cli(false));
+    super::init_ctx(&reference, super::KitConfig::new().parse_cli(false));
     let ctx = Context::default();
     super::bootstrap_context(&ctx, None);
     assert_eq!(installed_preset(&ctx), installed_preset(&reference));
@@ -129,7 +130,7 @@ fn the_deprecated_bootstrap_matches_init_with_defaults() {
 fn preferences_replace_the_options_but_keep_the_installed_style() {
     let ctx = context();
     let style = ctx.global_style();
-    let mut options = eframe::egui::Options::default();
+    let mut options = egui::Options::default();
     options.zoom_factor = 1.5;
     super::apply_preferences(&ctx, options);
     assert_eq!(ctx.options(|o| o.zoom_factor), 1.5);
@@ -138,7 +139,7 @@ fn preferences_replace_the_options_but_keep_the_installed_style() {
 
 #[test]
 fn a_prominent_primary_button_is_taller_than_a_stock_one() {
-    use eframe::egui::class::HasClasses as _;
+    use egui::class::HasClasses as _;
     let ctx = context();
     let (stock, prominent) = run(&ctx, 2, |ui| {
         ui.horizontal(|ui| {

@@ -2,7 +2,7 @@ use super::*;
 use crate::fonts::{self, TextScale};
 use crate::metrics::{self, Density};
 use crate::presets::{MATCHABLE_PRESETS, apply_preset, bootstrap_startup_theme, set_density};
-use eframe::egui::{
+use egui::{
     CentralPanel, Context, Event, FontDefinitions, Modifiers, PointerButton, Pos2, RawInput, Shape,
     Style, Vec2, pos2, vec2,
 };
@@ -315,9 +315,9 @@ fn a_section_stores_its_state_where_a_collapsing_header_would() {
     let ctx = context(Density::Regular);
     let id = run(&ctx, 1, |ui| {
         let _ = Section::new("salt", "T").default_open(false).header(ui);
-        ui.make_persistent_id(eframe::egui::IdSalt::new("salt"))
+        ui.make_persistent_id(egui::IdSalt::new("salt"))
     });
-    let stored = eframe::egui::collapsing_header::CollapsingState::load(&ctx, id);
+    let stored = egui::collapsing_header::CollapsingState::load(&ctx, id);
     assert!(stored.is_some_and(|s| !s.is_open()));
 }
 
@@ -484,7 +484,7 @@ fn a_value_field_formatter_shows_its_text() {
         .shapes
         .iter()
         .filter_map(|c| match &c.shape {
-            eframe::egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
             _ => None,
         })
         .collect();
@@ -497,7 +497,7 @@ fn an_icon_window_keeps_the_plain_title_id() {
     let mut full = ctx.run_ui(input(Vec::new()), |ui| {
         icon_window(ui.ctx(), icons::GEAR, "Settings").show(ui.ctx(), |_| {});
         icon_window(ui.ctx(), Icon::glyph("G"), "Glyph").show(ui.ctx(), |_| {});
-        eframe::egui::Window::new("Plain").show(ui.ctx(), |_| {});
+        egui::Window::new("Plain").show(ui.ctx(), |_| {});
     });
     full.textures_delta.clear();
     let known = |id| ctx.memory(|m| m.area_rect(id).is_some());
@@ -544,7 +544,7 @@ fn one_tab_press_focuses_the_text_inside_a_field() {
     };
     run_with(&ctx, Vec::new(), &mut draw);
     let tab = Event::Key {
-        key: eframe::egui::Key::Tab,
+        key: egui::Key::Tab,
         physical_key: None,
         pressed: true,
         repeat: false,
@@ -552,7 +552,7 @@ fn one_tab_press_focuses_the_text_inside_a_field() {
     };
     run_with(&ctx, vec![tab], &mut draw);
     run_with(&ctx, Vec::new(), &mut draw);
-    let focused = ctx.memory(|m| m.has_focus(eframe::egui::Id::unique("tab.field")));
+    let focused = ctx.memory(|m| m.has_focus(egui::Id::unique("tab.field")));
     assert!(focused, "the first Tab lands on the text, not the box");
 }
 
@@ -583,7 +583,7 @@ fn disabled_menu_rows_and_dialog_buttons_ignore_clicks() {
 #[test]
 fn a_section_reports_its_header_and_takes_an_exact_id() {
     let ctx = context(Density::Regular);
-    let id = eframe::egui::Id::unique("exact.section");
+    let id = egui::Id::unique("exact.section");
     let mut header = Rect::NOTHING;
     let mut clicked = false;
     let draw = |ui: &mut Ui, header: &mut Rect, clicked: &mut bool| {
@@ -607,7 +607,7 @@ fn a_section_reports_its_header_and_takes_an_exact_id() {
         draw(ui, &mut header, &mut clicked)
     });
     assert!(clicked);
-    let stored = eframe::egui::collapsing_header::CollapsingState::load(&ctx, id);
+    let stored = egui::collapsing_header::CollapsingState::load(&ctx, id);
     assert!(
         stored.is_some_and(|s| s.is_open()),
         "the click opened the exact id"
@@ -620,7 +620,7 @@ fn a_loading_row_sits_on_one_line() {
     let (row, line) = run(&ctx, 1, |ui| {
         (
             loading_row(ui, "Loading drivers").rect,
-            ui.text_style_height(&eframe::egui::TextStyle::Body),
+            ui.text_style_height(&egui::TextStyle::Body),
         )
     });
     assert!(
@@ -778,7 +778,7 @@ fn swatch_outlines_stand_out_from_the_menu_and_hover_fills() {
     let ctx = context(Density::Regular);
     let dark = Tokens::get(&ctx);
     let light_style = Style {
-        visuals: eframe::egui::Visuals::light(),
+        visuals: egui::Visuals::light(),
         ..Style::default()
     };
     let light = Tokens::derive(&light_style, dark.success, dark.secondary);

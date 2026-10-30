@@ -1,9 +1,9 @@
 //! Galactic glass: AMOLED-black page, violet glass surfaces, pink press and aqua hover accents.
 
-use eframe::egui::style::{
+use egui::style::{
     HandleShape, ImeComposition, Selection, TextCursorStyle, WidgetVisuals, Widgets,
 };
-use eframe::egui::{Color32, CornerRadius, Shadow, Stroke, Style, Visuals};
+use egui::{Color32, CornerRadius, Shadow, Stroke, Style, Visuals};
 
 use crate::glass::GlassParams;
 use crate::glass_material::{glass_interaction, glass_spacing, glass_text_styles, pane, pane_over};

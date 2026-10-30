@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use eframe::egui::{
+use egui::{
     Align2, Context, CornerRadius, FontId, Rect, RichText, Role, Sense, Stroke, StrokeKind,
     TextEdit, Ui, WidgetInfo, pos2, vec2,
 };
@@ -239,7 +239,7 @@ fn card(
 fn paint_frame(
     ui: &Ui,
     mini: Rect,
-    response: &eframe::egui::Response,
+    response: &egui::Response,
     cue: Cue,
     tokens: &Tokens,
     live: &Tokens,
@@ -285,7 +285,7 @@ fn paint_label(ui: &Ui, rect: Rect, label_h: f32, def: &PresetDef, cue: Cue, liv
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{CentralPanel, Event, FullOutput, PointerButton, Pos2, RawInput, Shape};
+    use egui::{CentralPanel, Event, FullOutput, PointerButton, Pos2, RawInput, Shape};
 
     fn draw(
         ctx: &Context,

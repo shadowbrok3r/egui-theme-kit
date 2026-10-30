@@ -1,6 +1,6 @@
 //! Every kit control in every state, for a live preview of the active theme.
 
-use eframe::egui::{
+use egui::{
     Align, Button, ComboBox, DragValue, Frame, Id, Layout, Sense, TextEdit, Ui, Vec2,
     class::HasClasses as _, containers::menu,
 };
@@ -604,24 +604,20 @@ fn surfaces(ui: &mut Ui) {
         let _ = subheading(ui, icons::GEAR, "Primary volume 1 TB");
         let _ = status_label(ui, icons::CHECK_CIRCLE, "SMART healthy", t.success);
     });
-    #[cfg(glass_backend)]
-    {
-        use super::glass_card;
-        glass_card::titled_card(ui, icons::GEAR, "Frosted card", Some("glass"), |ui| {
-            let _ = status_label(
-                ui,
-                icons::CHECK_CIRCLE,
-                "Frosts its backdrop on glass presets",
-                t.success,
-            );
-        });
-        glass_card::titled_group(ui, icons::LIST, "Row card", Some("no frost"), |ui| {
-            let _ = icon_label(ui, icons::FILE, "Cheap enough to repeat per row");
-        });
-        glass_card::row_card(ui, |ui| {
-            let _ = icon_label(ui, icons::FOLDER, "A full-width row card");
-        });
-    }
+    super::glass_card::titled_card(ui, icons::GEAR, "Frosted card", Some("glass"), |ui| {
+        let _ = status_label(
+            ui,
+            icons::CHECK_CIRCLE,
+            "Frosts its backdrop on glass presets",
+            t.success,
+        );
+    });
+    super::glass_card::titled_group(ui, icons::LIST, "Row card", Some("no frost"), |ui| {
+        let _ = icon_label(ui, icons::FILE, "Cheap enough to repeat per row");
+    });
+    super::glass_card::row_card(ui, |ui| {
+        let _ = icon_label(ui, icons::FOLDER, "A full-width row card");
+    });
     callout(ui, t.warn, icons::WARNING, |ui| {
         ui.label("A scan is still running. Leave it running and keep working.");
     });

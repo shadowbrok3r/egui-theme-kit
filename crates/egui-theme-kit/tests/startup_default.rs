@@ -1,9 +1,10 @@
 //! The deprecated process-wide default theme is process state, so it is exercised alone in this test binary.
 #![allow(deprecated)]
+#![cfg_attr(not(feature = "eframe"), allow(unused_imports))]
 
 use std::sync::Mutex;
 
-use eframe::egui::Context;
+use egui::Context;
 use egui_theme_kit::{
     KitConfig,
     metrics::Density,
@@ -16,6 +17,7 @@ use egui_theme_kit::{
 /// Serializes the tests that touch the process-wide default.
 static GLOBAL: Mutex<()> = Mutex::new(());
 
+#[cfg(feature = "eframe")]
 #[test]
 fn an_app_default_theme_replaces_graphite_until_it_is_reset() {
     let _guard = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -58,15 +60,14 @@ fn the_deprecated_global_feeds_init_and_the_context_decisions_follow_it() {
     persist::set_default_theme(noir.clone());
 
     let ctx = Context::default();
-    startup::init_context(&ctx, None, KitConfig::new().parse_cli(false));
+    startup::init_ctx(&ctx, KitConfig::new().parse_cli(false));
     assert_eq!(presets::installed_preset(&ctx), PresetStyles::Noir);
     assert!(startup::is_configured_default(&ctx, &noir));
     assert!(persist::is_default_in(&ctx, &noir));
 
     let explicit = Context::default();
-    startup::init_context(
+    startup::init_ctx(
         &explicit,
-        None,
         KitConfig::new()
             .parse_cli(false)
             .default_preset(PresetStyles::Quartz.as_str()),
@@ -79,6 +80,6 @@ fn the_deprecated_global_feeds_init_and_the_context_decisions_follow_it() {
 
     persist::reset_default_theme();
     let plain = Context::default();
-    startup::init_context(&plain, None, KitConfig::new().parse_cli(false));
+    startup::init_ctx(&plain, KitConfig::new().parse_cli(false));
     assert_eq!(presets::installed_preset(&plain), PresetStyles::Graphite);
 }

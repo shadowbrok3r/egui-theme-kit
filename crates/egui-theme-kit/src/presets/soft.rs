@@ -1,10 +1,10 @@
 //! Soft glass family: low-chroma glass over a near-black base with outlined controls, generated from one [`SoftPalette`].
 
-use eframe::egui::style::{
+use egui::style::{
     HandleShape, ImeComposition, Interaction, Selection, Spacing, TextCursorStyle, WidgetVisuals,
     Widgets,
 };
-use eframe::egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Vec2, Visuals};
+use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Vec2, Visuals};
 
 use crate::glass::GlassParams;
 use crate::glass_material::{

@@ -8,11 +8,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use eframe::egui::{Context, Id};
+use egui::{Context, Id};
 
+#[cfg(feature = "eframe")]
+use super::saved::theme_to_json;
 use super::{
     presets::{self, themes_equal},
-    saved::{SavedTheme, theme_from_json, theme_to_json},
+    saved::{SavedTheme, theme_from_json},
     startup,
     store::{StartupTheme, ThemeStore},
     theme_chrome::graphite_theme,
@@ -113,11 +115,13 @@ pub fn load_file(path: &Path) -> anyhow::Result<SavedTheme> {
 }
 
 /// The theme saved in `storage`, if any; a stored value that cannot be decoded is logged and ignored.
+#[cfg(feature = "eframe")]
 pub fn load_stored(storage: Option<&dyn eframe::Storage>) -> Option<SavedTheme> {
     load_stored_from(storage, &[STORAGE_KEY])
 }
 
 /// The theme under the first of `keys` that holds a decodable value; use to read keys an earlier release wrote.
+#[cfg(feature = "eframe")]
 pub fn load_stored_from(
     storage: Option<&dyn eframe::Storage>,
     keys: &[&str],
@@ -136,6 +140,7 @@ pub fn load_stored_from(
 }
 
 /// The theme to apply at startup: the `--theme` file, else the stored theme, else the process-wide default.
+#[cfg(feature = "eframe")]
 #[deprecated(note = "use `resolve_in`, which falls back to the config default of the context")]
 pub fn resolve(
     storage: Option<&dyn eframe::Storage>,
@@ -145,12 +150,18 @@ pub fn resolve(
 }
 
 /// [`resolve`] with the config default of `ctx` as the fallback.
+#[cfg(feature = "eframe")]
 pub fn resolve_in(
     ctx: &Context,
     storage: Option<&dyn eframe::Storage>,
     file: Option<&Path>,
 ) -> (SavedTheme, ThemeSource) {
     resolve_from(default_theme_in(ctx), file, || load_stored(storage))
+}
+
+/// The `--theme` file, else the config default of `ctx`; [`resolve_in`] without a storage.
+pub fn resolve_file_in(ctx: &Context, file: Option<&Path>) -> (SavedTheme, ThemeSource) {
+    resolve_from(default_theme_in(ctx), file, || None)
 }
 
 /// The theme to apply at startup from a [`ThemeStore`]: the `--theme` file, the pinned startup theme, the active theme, else the process-wide default.
@@ -240,6 +251,7 @@ pub fn is_embedded_default(theme: &SavedTheme) -> bool {
 ///
 /// Nothing is written while the theme came from a `--theme` file. Keys registered with
 /// [`KitConfig::legacy_storage_key`](crate::KitConfig::legacy_storage_key) are removed once the theme is written.
+#[cfg(feature = "eframe")]
 pub fn save(ctx: &Context, storage: &mut dyn eframe::Storage) {
     if matches!(source(ctx), ThemeSource::File(_)) {
         return;
@@ -265,18 +277,25 @@ pub fn save(ctx: &Context, storage: &mut dyn eframe::Storage) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg_attr(not(feature = "eframe"), allow(unused_imports))]
     use super::super::{
         metrics::Density,
         presets::{PresetStyles, apply_preset, apply_saved_theme, set_density},
-        store::{MemoryStore, test_dir},
+        store::MemoryStore,
     };
     use super::*;
+    #[cfg(feature = "eframe")]
+    use crate::store::test_dir;
+    #[cfg(feature = "eframe")]
     use eframe::Storage as _;
+    #[cfg(feature = "eframe")]
     use std::collections::HashMap;
 
+    #[cfg(feature = "eframe")]
     #[derive(Default)]
     struct MemStorage(HashMap<String, String>);
 
+    #[cfg(feature = "eframe")]
     impl eframe::Storage for MemStorage {
         fn get_string(&self, key: &str) -> Option<String> {
             self.0.get(key).cloned()
@@ -293,6 +312,7 @@ mod tests {
         fn flush(&mut self) {}
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn nothing_stored_resolves_to_the_embedded_default() {
         let storage = MemStorage::default();
@@ -303,6 +323,7 @@ mod tests {
         assert_eq!(source, ThemeSource::Embedded);
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn an_untouched_theme_clears_the_entry_instead_of_pinning_the_default() {
         let ctx = Context::default();
@@ -317,6 +338,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn a_changed_theme_round_trips_through_storage() {
         let ctx = Context::default();
@@ -335,6 +357,7 @@ mod tests {
         assert_eq!(presets::installed_preset(&fresh), PresetStyles::NoirGlass);
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn a_corrupt_entry_falls_back_to_the_embedded_default() {
         let mut storage = MemStorage::default();
@@ -344,6 +367,7 @@ mod tests {
         assert!(is_default_in(&Context::default(), &theme));
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn an_earlier_release_key_is_read_when_the_current_one_is_empty() {
         let ctx = Context::default();
@@ -378,6 +402,7 @@ mod tests {
         assert_eq!(source(&fresh), ThemeSource::Stored);
     }
 
+    #[cfg(feature = "eframe")]
     #[test]
     fn a_theme_file_wins_and_is_never_written_back() {
         let dir = test_dir("persist_file");

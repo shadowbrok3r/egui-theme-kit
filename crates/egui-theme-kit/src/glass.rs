@@ -1,6 +1,6 @@
 //! Real GPU backdrop blur behind tinted-glass surfaces over `backdrop-blur-egui`'s grab-pass path, degrading to flat fills without a glow renderer.
 
-use eframe::egui::{
+use egui::{
     Align2, Area, AsIdSalt, Color32, Context, CornerRadius, FontId, Frame, Id, InnerResponse,
     LayerId, Order, Rect, Response, Sense, StrokeKind, Ui, UiBuilder, Vec2, pos2,
 };
@@ -144,6 +144,7 @@ fn request(ctx: &Context) {
 }
 
 /// Builds the grab-pass backend from `cc.gl` with the `glass` feature; without it the backend comes up on the first glow paint. Returns whether it is up.
+#[cfg(feature = "eframe")]
 pub fn install(cc: &eframe::CreationContext<'_>) -> bool {
     backend::install(cc)
 }
@@ -608,7 +609,7 @@ impl FrostStatus {
 #[cfg(not(glass_backend))]
 mod backend {
     use super::{FrostReport, GlassParams, Support};
-    use eframe::egui::{Context, Rect, Ui};
+    use egui::{Context, Rect, Ui};
 
     pub(super) fn is_available() -> bool {
         false
@@ -618,6 +619,7 @@ mod backend {
         Support::NotBuilt
     }
 
+    #[cfg(feature = "eframe")]
     pub(super) fn install(_: &eframe::CreationContext<'_>) -> bool {
         log::info!("backdrop blur unavailable: built without the `glass` feature");
         false
@@ -643,7 +645,7 @@ mod backend {
         BlurRadius, CornerRadius, FrostOutcome, GrabPassRenderer, Presence, RepaintPolicy, Surface,
         Tint, glow,
     };
-    use eframe::egui::{Context, Id, LayerId, Order, PaintCallback, Rect, Ui, Vec2};
+    use egui::{Context, Id, LayerId, Order, PaintCallback, Rect, Ui, Vec2};
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, RwLock};
 
@@ -909,7 +911,7 @@ mod backend {
         use super::super::tests::{add_callback, callbacks, glass, input};
         use super::super::{frost_behind_floating_with, poll_outcome};
         use super::*;
-        use eframe::egui::{Context, Id, pos2, vec2};
+        use egui::{Context, Id, pos2, vec2};
 
         #[test]
         fn the_wiring_warning_waits_for_three_silent_polls() {
@@ -1005,7 +1007,7 @@ mod backend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{PaintCallback, RawInput, Shape, ViewportId, vec2};
+    use egui::{PaintCallback, RawInput, Shape, ViewportId, vec2};
     use std::sync::Arc;
 
     #[test]
@@ -1174,7 +1176,7 @@ mod tests {
 
     /// Paint callbacks in a frame's output.
     #[cfg(glass_backend)]
-    pub(super) fn callbacks(full: &eframe::egui::FullOutput) -> usize {
+    pub(super) fn callbacks(full: &egui::FullOutput) -> usize {
         full.shapes
             .iter()
             .filter(|s| matches!(s.shape, Shape::Callback(_)))
@@ -1269,7 +1271,7 @@ mod tests {
         fonts::{self, TextScale},
         presets::{self, apply_preset, builtin_presets},
     };
-    use eframe::egui::{CentralPanel, FullOutput, Popup, PopupKind, Window, epaint::RectShape};
+    use egui::{CentralPanel, FullOutput, Popup, PopupKind, Window, epaint::RectShape};
 
     /// What a frame painted, in draw order.
     #[derive(Default)]

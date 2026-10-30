@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{
+use egui::{
     Button, Color32, ComboBox, Context, CornerRadius, Frame, Id, Margin, Stroke, Style, TextEdit,
     TextStyle, Ui, Vec2, Visuals,
     class::{ClassName, Classes, HasClasses as _},
@@ -318,7 +318,7 @@ impl StyleProvider<SeparatorStyle> for KitTheme {
 mod tests {
     use std::fmt::Debug;
 
-    use eframe::egui::{
+    use egui::{
         CentralPanel, CompletionPopup, DragValue, Pos2, RawInput, Rect, Shape, Ui, UiBuilder,
         containers::menu, epaint::ClippedShape, vec2,
     };
@@ -797,7 +797,7 @@ mod tests {
                 .frame
                 .total_margin()
                 .top;
-            let offset = |out: &eframe::egui::text_edit::TextEditOutput| {
+            let offset = |out: &egui::text_edit::TextEditOutput| {
                 out.galley_pos.y - out.response.response.rect.top()
             };
             ([offset(&hinted), offset(&typed)], margin)
@@ -1169,8 +1169,8 @@ mod tests {
     }
 
     /// Every rect shape in `shapes`, flattened.
-    fn rects(shapes: &[ClippedShape]) -> Vec<eframe::egui::epaint::RectShape> {
-        fn walk(shape: &Shape, out: &mut Vec<eframe::egui::epaint::RectShape>) {
+    fn rects(shapes: &[ClippedShape]) -> Vec<egui::epaint::RectShape> {
+        fn walk(shape: &Shape, out: &mut Vec<egui::epaint::RectShape>) {
             match shape {
                 Shape::Rect(rect) => out.push(rect.clone()),
                 Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),

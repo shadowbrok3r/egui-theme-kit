@@ -1,8 +1,6 @@
 //! A miniature window painted from a theme's tokens.
 
-use eframe::egui::{
-    Align2, Color32, CornerRadius, FontId, Rect, Stroke, StrokeKind, Ui, pos2, vec2,
-};
+use egui::{Align2, Color32, CornerRadius, FontId, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use crate::{
     glass::GlassParams,
@@ -135,7 +133,7 @@ pub fn paint(ui: &Ui, rect: Rect, preview: &Preview<'_>) {
 }
 
 /// Blurry-looking colour blobs behind a glass window.
-fn paint_backdrop(painter: &eframe::egui::Painter, rect: Rect, t: &Tokens) {
+fn paint_backdrop(painter: &egui::Painter, rect: Rect, t: &Tokens) {
     let h = rect.height();
     for (i, color) in [t.primary, t.secondary, t.tertiary].into_iter().enumerate() {
         let x = rect.left() + rect.width() * (0.2 + 0.3 * i as f32);
@@ -144,7 +142,7 @@ fn paint_backdrop(painter: &eframe::egui::Painter, rect: Rect, t: &Tokens) {
     }
 }
 
-fn paint_body(painter: &eframe::egui::Painter, window: Rect, top: f32, t: &Tokens, font: &FontId) {
+fn paint_body(painter: &egui::Painter, window: Rect, top: f32, t: &Tokens, font: &FontId) {
     let inset = 6.0;
     let x0 = window.left() + inset;
     let x1 = window.right() - inset;
@@ -226,7 +224,7 @@ fn paint_body(painter: &eframe::egui::Painter, window: Rect, top: f32, t: &Token
 }
 
 /// Body and dim text beside a progress bar.
-fn paint_status_row(painter: &eframe::egui::Painter, row: Rect, t: &Tokens, font: &FontId) {
+fn paint_status_row(painter: &egui::Painter, row: Rect, t: &Tokens, font: &FontId) {
     let text = painter.text(
         row.left_center() + vec2(3.0, 0.0),
         Align2::LEFT_CENTER,
@@ -250,7 +248,7 @@ fn paint_status_row(painter: &eframe::egui::Painter, row: Rect, t: &Tokens, font
     painter.rect_filled(fill, 3, t.primary);
 }
 
-fn text_width(painter: &eframe::egui::Painter, text: &str, font: &FontId) -> f32 {
+fn text_width(painter: &egui::Painter, text: &str, font: &FontId) -> f32 {
     painter
         .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
         .size()
@@ -258,7 +256,7 @@ fn text_width(painter: &eframe::egui::Painter, text: &str, font: &FontId) -> f32
 }
 
 /// The seven swatches of [`Tokens::swatches`] along the foot of `rect`.
-fn paint_swatches(painter: &eframe::egui::Painter, rect: Rect, t: &Tokens) {
+fn paint_swatches(painter: &egui::Painter, rect: Rect, t: &Tokens) {
     let swatches = t.swatches();
     let gap = 2.0;
     let width = rect.width() - 2.0 * MARGIN;
@@ -302,7 +300,7 @@ pub fn paint_strip(ui: &Ui, rect: Rect, colors: &[Color32], outline: Color32) {
 mod tests {
     use super::*;
     use crate::presets::{PresetStyles, apply_preset};
-    use eframe::egui::{Context, Pos2, RawInput};
+    use egui::{Context, Pos2, RawInput};
 
     fn frame(ctx: &Context, f: impl FnMut(&mut Ui)) {
         let mut f = f;
@@ -357,8 +355,8 @@ mod tests {
             let theme = def.theme();
             let tokens = theme_tokens(&theme);
             frame(&ctx, |ui| {
-                let (rect, _) = ui
-                    .allocate_exact_size(vec2(180.0, PREVIEW_HEIGHT), eframe::egui::Sense::hover());
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(180.0, PREVIEW_HEIGHT), egui::Sense::hover());
                 let preview = Preview::new(&tokens, def.glass(), window_opacity(&theme), def.name);
                 paint(ui, rect, &preview);
                 paint_strip(ui, rect, &tokens.swatches(), tokens.card_border);
