@@ -12,7 +12,7 @@ use crate::{
     fonts::TextScale,
     glass::{self, GlassParams},
     metrics::Density,
-    presets::{self, PresetRef, themes_equal},
+    presets::{self, PresetDef, PresetRef, themes_equal},
     saved::{SavedTheme, SemanticColors, theme_from_json},
     startup,
     store::{AutoSave, Fingerprint, NamedTheme, StartupTheme, ThemeStore, clean_name},
@@ -62,6 +62,8 @@ pub struct PickerOptions {
     pub import_export: bool,
     /// Capability of a host-provided blur renderer, when it does not use eframe.
     pub glass_available: Option<fn() -> bool>,
+    /// Which presets the gallery lists; `None` lists all, [`presets::is_opaque`] leaves out the glass presets.
+    pub presets: Option<fn(&PresetDef) -> bool>,
     /// Compact touch layout: inline sizing choices and fewer columns in the color editor.
     pub compact: bool,
     /// How long the live theme must be still before it is saved to the store.
@@ -77,6 +79,7 @@ impl Default for PickerOptions {
             customize: true,
             import_export: true,
             glass_available: None,
+            presets: None,
             compact: false,
             debounce: Duration::from_millis(600),
         }
@@ -96,6 +99,12 @@ impl PickerOptions {
     /// These options with the window id `id`.
     pub fn with_window_id(mut self, id: Id) -> Self {
         self.window_id = Some(id);
+        self
+    }
+
+    /// These options listing only the presets `filter` accepts.
+    pub fn with_presets(mut self, filter: fn(&PresetDef) -> bool) -> Self {
+        self.presets = Some(filter);
         self
     }
 }

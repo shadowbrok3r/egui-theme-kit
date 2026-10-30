@@ -27,12 +27,14 @@ glass = ["eframe", "eframe/glow"]
 files = ["dep:rfd", "dep:directories"]
 # Themed control widgets.
 controls = []
-# Custom window title bar with caption buttons, window chrome preferences and the Windows client-area fix; eframe only, since other hosts drop viewport commands.
+# Custom window title bar with caption buttons, window chrome preferences and the Windows client-area fix; implies eframe.
 title-bar = ["eframe", "controls", "dep:windows", "dep:raw-window-handle"]
 # In-app log viewer.
 logger = ["controls", "dep:chrono", "dep:regex"]
 # Theme picker window and preset browser.
 picker = []
+# `From<egui_icon_pack::Icon>` for the control kit's `Icon`.
+icon-pack = ["controls", "dep:egui-icon-pack"]
 
 [dependencies]
 eframe = { workspace = true, features = ["default_fonts", "persistence", "serde"], optional = true }
@@ -51,6 +53,7 @@ rfd = { version = "0.17", optional = true }
 directories = { version = "6", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 regex = { version = "1", optional = true }
+egui-icon-pack = { path = "../egui-icon-pack", default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = { version = "0.6", optional = true }

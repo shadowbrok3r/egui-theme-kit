@@ -360,7 +360,7 @@ pub fn editor(ui: &mut Ui, config: &mut ThemeConfig, density: Density) -> bool {
     editor_with_glass(ui, config, density, true)
 }
 
-/// Hosts without a backdrop renderer can omit glass-only controls.
+/// Hosts without a backdrop renderer can omit glass-only controls; the gallery then leaves out the glass presets.
 pub fn editor_with_glass(
     ui: &mut Ui,
     config: &mut ThemeConfig,
@@ -371,7 +371,7 @@ pub fn editor_with_glass(
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
     ui.heading("Theme");
     ui.label("Changes preview immediately and are saved on this device.");
-    preset_selector(ui, config);
+    preset_selector(ui, config, supports_glass);
     ui.add_space(6.);
     ui.strong("Size and spacing");
     ui.spacing_mut().slider_width = (ui.available_width() - 120.).clamp(60., 240.);
@@ -481,7 +481,7 @@ pub fn editor_with_glass(
     *config != before
 }
 
-fn preset_selector(ui: &mut Ui, config: &mut ThemeConfig) {
+fn preset_selector(ui: &mut Ui, config: &mut ThemeConfig, supports_glass: bool) {
     ui.add_space(6.0);
     let current = config
         .preset
@@ -503,7 +503,8 @@ fn preset_selector(ui: &mut Ui, config: &mut ThemeConfig) {
     let mut gallery = ui
         .ctx()
         .data(|data| data.get_temp::<crate::picker::PresetGallery>(id))
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .with_filter((!supports_glass).then_some(crate::presets::is_opaque as fn(&_) -> bool));
     let mut selected = None;
     egui::CollapsingHeader::new("Presets")
         .id_salt("appearance-presets")

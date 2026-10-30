@@ -194,6 +194,9 @@ let fonts = FontConfig::new().installer(egui_icon_pack::install_fonts);
 `egui_icon_pack::phosphor` re-exports `egui-phosphor`, and `icon`, `icon_sized` and `icon_colored`
 build rich text from a glyph.
 
+The kit's `icon-pack` feature turns an `Icon` into `egui_theme_kit::controls::Icon` with
+`Icon::from(icon)`, a duotone pair when the icon has a duo layer, for the kit's painted controls.
+
 ## Features
 
 | Feature | Default | Effect |

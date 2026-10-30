@@ -643,6 +643,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-data-table",
+ "egui-icon-pack",
  "egui-phosphor",
  "egui-toast",
  "egui_dock",

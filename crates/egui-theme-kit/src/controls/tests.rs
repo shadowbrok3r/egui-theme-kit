@@ -1155,3 +1155,61 @@ fn usage_meters_take_the_colour_of_their_level() {
     assert!(critical.contains(&level(95.0)));
     assert_ne!(level(30.0), level(95.0));
 }
+
+/// Paints a square filled with the colour it is given.
+fn swatch_icon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    painter.rect_filled(rect, 0.0, color);
+}
+
+/// Fill colours of the rects and the colours of the text one frame of `f` paints.
+fn painted_colours(ctx: &Context, mut f: impl FnMut(&mut Ui)) -> (Vec<Color32>, Vec<Color32>) {
+    let mut full = ctx.run_ui(input(Vec::new()), |ui| {
+        CentralPanel::default().show(ui, |ui| f(ui));
+    });
+    full.textures_delta.clear();
+    let (mut fills, mut texts) = (Vec::new(), Vec::new());
+    for clipped in &full.shapes {
+        match &clipped.shape {
+            Shape::Rect(rect) => fills.push(rect.fill),
+            Shape::Text(text) => texts.push(text.fallback_color),
+            _ => {}
+        }
+    }
+    (fills, texts)
+}
+
+#[test]
+fn an_icon_tint_colours_the_icon_of_a_text_button_and_not_its_label() {
+    let ctx = context(Density::Regular);
+    let tint = Color32::from_rgb(1, 2, 3);
+    let (fills, texts) = painted_colours(&ctx, |ui| {
+        let _ = TextButton::new("Undo")
+            .icon(Icon::painted(swatch_icon))
+            .icon_tint(tint)
+            .show(ui);
+    });
+    assert!(fills.contains(&tint), "{fills:?}");
+    assert!(!texts.is_empty() && !texts.contains(&tint), "{texts:?}");
+}
+
+#[test]
+fn an_icon_tone_colours_a_menu_icon_unless_the_row_is_a_danger_row() {
+    let ctx = context(Density::Regular);
+    let tone = Color32::from_rgb(4, 5, 6);
+    let (fills, texts) = painted_colours(&ctx, |ui| {
+        let _ = MenuItem::new("Undo")
+            .icon(Icon::painted(swatch_icon))
+            .icon_tone(tone)
+            .show(ui);
+    });
+    assert!(fills.contains(&tone), "{fills:?}");
+    assert!(!texts.contains(&tone), "{texts:?}");
+    let (fills, _) = painted_colours(&ctx, |ui| {
+        let _ = MenuItem::new("Delete")
+            .icon(Icon::painted(swatch_icon))
+            .icon_tone(tone)
+            .danger(true)
+            .show(ui);
+    });
+    assert!(!fills.contains(&tone), "{fills:?}");
+}

@@ -12,10 +12,10 @@ A theme and styling system for [egui](https://github.com/emilk/egui) apps, insta
 - **Fonts.** Inter (Regular, Medium, SemiBold) bundled, medium and semibold weight families, and a `FontConfig` builder for your own faces and icon fonts.
 - **Presets and saved themes.** A preset registry with 19 built-in looks (Graphite, Studio, Noir, Noir Glass, Frost, five neon glass, four soft glass, Tokyo Night and Storm, Rerun and Rerun OLED, Default egui), `register_preset` for your own, JSON import and export, bare `egui::Style` files accepted.
 - **Theme picker.** An embeddable settings panel (`picker::show` / `picker::window`): preset gallery with live miniatures, saved user themes, customization of density, text size, glass and token colors with contrast warnings, import and export. Persistence goes through a small non-blocking `ThemeStore` trait you can implement over any database, including one that opens after the window; `MemoryStore`, `JsonDirStore` and an eframe-storage store are included. The window title and id are configurable.
-- **Control kit, title bar and logger (optional).** Painted buttons, toggles, fields, list rows, meters, section headers and a glass card; a custom window title bar with caption buttons, drag and resize edges; an in-app log viewer. Icons are caller-provided, so any icon crate works.
-- **Chrome for companion crates.** `egui_dock` styling, `egui-data-table` selection colors, `egui-toast` notifications.
+- **Control kit, title bar and logger (optional).** Painted buttons, toggles, fields, list rows, meters, section headers and a glass card; a custom window title bar with caption buttons, drag and resize edges; an in-app log viewer. Icons are caller-provided, so any icon crate works; with `icon-pack`, `egui-icon-pack` icons convert directly, and `TextButton::icon_tint` / `MenuItem::icon_tone` colour an icon apart from its label.
+- **Chrome for companion crates.** `egui_dock` styling, `egui-data-table` selection colors, `egui-toast` notifications, including toasts with an action button such as Undo.
 - **Frosted glass.** Real GPU backdrop blur behind floating surfaces, with a kill switch and a flat-fill fallback.
-- **Debug panel.** Ctrl+Alt+T opens a Theme window: presets, density, text size, glass dials, token swatches, widget gallery, JSON editor and frame timings.
+- **Debug panel.** Ctrl+Alt+T (`debug_panel::set_shortcut` changes or removes it) opens a Theme window: presets, density, text size, glass dials, token swatches, widget gallery, JSON editor and frame timings.
 - **CLI switches.** `--theme <file>`, `--theme-dump`, `--theme-panel`, `--no-frost`.
 
 ## Workspace crates
@@ -56,6 +56,7 @@ egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev =
 | `controls` | no | painted control kit (buttons, toggles, fields, list rows, meters, glass card) |
 | `title-bar` | no | custom window title bar with caption buttons, drag area and resize edges, the saved custom-or-system choice (`chrome`) and the Windows client-area fix (implies `eframe` and `controls`) |
 | `logger` | no | in-app log viewer (implies `controls`) |
+| `icon-pack` | no | `From<egui_icon_pack::Icon>` for `controls::Icon`, a duotone pair when the pack carries a duo layer (implies `controls`) |
 
 The defaults match the author's apps, which use every one of these companions. For a smaller dependency tree use `default-features = false` and enable what you need; the core (tokens, metrics, fonts, widget theme, presets, saved themes, debug panel) needs only `egui`, `egui_extras` and a few small crates (`serde`, `serde_json`, `anyhow`, `log`). An eframe app adds `eframe` (or `glass`, which implies it) for `init(cc)` and eframe storage.
 
@@ -137,7 +138,8 @@ egui_theme_kit::init_ctx(&ctx, KitConfig::new().parse_cli(false).store(store.clo
 
 - `init_ctx(ctx, cfg)` is `init` without eframe: command-line options (unless `parse_cli(false)`), fonts, the startup theme and the store poll. The startup order is the one in "Persistence and startup order" without eframe storage, so persist through a `ThemeStore` (`CachedStore` over your backend, `MemoryStore`, or `JsonDirStore` with `files`) and bound the exit flush with `CachedStore::flush_within`.
 - The kit's per-pass plugins run inside `Context::run_ui`, which bevy_egui calls every pass.
-- No blur backend is built: glass surfaces paint the tint only and `glass::support()` is `NotBuilt`. Pass `PickerOptions::glass_available: Some(|| false)` so the picker says so.
+- No blur backend is built: glass surfaces paint the tint only and `glass::support()` is `NotBuilt`. Give the picker `glass_available: Some(|| false)` so it says so, and `presets: Some(presets::is_opaque)` so it leaves out the glass presets, whose translucent windows would show the scene unblurred.
+- `debug_panel::set_shortcut(ctx, ..)` moves the panel off Ctrl+Alt+T, which some desktops reserve, or turns the shortcut off.
 - Not available without eframe: `init(cc)`, `init_context`, `save`, `EframeStorageStore`, `persist::load_stored`/`resolve_in` (use `persist::resolve_file_in`), `glass::install` and the `title-bar` feature, whose viewport commands bevy_egui does not carry out.
 - Android hosts leave out `files` (no `rfd`); the eframe-free features check for `aarch64-linux-android`.
 
@@ -180,7 +182,7 @@ if appearance::editor(ui, &mut config, Density::Touch) {
 
 For a preview browser without a settings editor, retain a `picker::PresetGallery` and call `gallery.show(ui, selected_preset_id)`. It returns the chosen `PresetDef` without changing the live theme; the app applies and saves it. It shares rendering, grouping and search with `picker::show`, and leaves scrolling to its host.
 
-The full picker also supports `PickerOptions::compact` for narrow touch layouts and `glass_available` for a host-provided backdrop renderer. Visual preset recognition ignores host input policy, so changing numeric editing or text-selection behavior does not turn a saved preset into a custom theme.
+The full picker also supports `PickerOptions::compact` for narrow touch layouts, `glass_available` for a host-provided backdrop renderer, and `presets` to limit the gallery: `presets::is_opaque` leaves out the presets with translucent surfaces. `PresetGallery::with_filter` does the same for the embedded gallery, and `appearance::editor_with_glass(.., false)` hides those presets along with the glass controls. Visual preset recognition ignores host input policy, so changing numeric editing or text-selection behavior does not turn a saved preset into a custom theme.
 
 ### Stock widget theme
 
@@ -222,6 +224,23 @@ egui_theme_kit::init(cc, KitConfig::default().fonts(fonts));
 Order of application: extra faces, the monospace list, named families, `installers` in order, then Inter. Installers are plain `fn(&mut FontDefinitions)` hooks, so an icon pack's `install_fonts` plugs in directly. A family that names a face nobody registered is pruned with a warning rather than crashing. `FontConfig::face_stripped` removes a face's Private Use Area mappings the same way Inter's are.
 
 The registered config survives an egui memory reset and is reused whenever the text scale changes, so icon fonts stay installed across rescales.
+
+## Toasts
+
+With `toast`, `toast::style(Toasts::new())` draws `egui-toast` notifications in the kit look: a status dot, the message and a dismiss button. `toast::action_toast` adds a button such as Undo, and `toast::take_actions` reports the clicked ones:
+
+```rust
+use egui_theme_kit::toast::{self, ToastAction};
+
+let undo = ToastAction::new("Undo", undo_id).icon(icons::ARROW_U_UP_LEFT);
+toasts.add(toast::action_toast(ctx, ToastKind::Info, "Deleted layer \"Arm Sway\"", undo, 8.0));
+// after toasts.show(ui):
+for id in toast::take_actions(ctx) {
+    // run the undo `id` names
+}
+```
+
+An action toast stays up at least `toast::ACTION_MIN_SECS` (6 s), its time runs only while the pointer is off it, and a click on its body does not close it. `toast::close_action(ctx, id)` closes it from code, for example once Ctrl+Z ran the same undo. The icon is any `ImageSource`, an `egui_icon_pack::Icon` included.
 
 ## Frosted glass
 
@@ -363,7 +382,7 @@ Applying a theme inside a pass discards that pass, so no widget draws once in th
 - Replace `persist::set_default_theme`, `persist::default_theme()` and `persist::is_embedded_default` with `KitConfig::default_theme`, `persist::default_theme_in(ctx)` and `persist::is_default_in(ctx, &theme)`; `resolve` and `resolve_with_store` have `_in(ctx, ...)` forms.
 - An earlier release's eframe storage key goes into `KitConfig::legacy_storage_key`; `save` removes it once the theme is written.
 - The picker window takes its title and id from `PickerOptions::title` and `PickerOptions::window_id`.
-- An icon module with its own `Icon`, widgets and table generator moves onto `egui-icon-pack`; [its MIGRATION.md](crates/egui-icon-pack/MIGRATION.md) lists the API differences and the generator options that keep existing image keys.
+- An icon module with its own `Icon`, widgets and table generator moves onto `egui-icon-pack`; [its MIGRATION.md](crates/egui-icon-pack/MIGRATION.md) lists the API differences and the generator options that keep existing image keys. A local function that turns a pack icon into a kit `Icon` gives way to the `icon-pack` feature's `Icon::from`.
 
 ## Development
 

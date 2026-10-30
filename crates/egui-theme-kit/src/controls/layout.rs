@@ -414,6 +414,7 @@ pub struct MenuItem<'a> {
     checked: Option<bool>,
     danger: bool,
     tone: Option<Color32>,
+    icon_tone: Option<Color32>,
     enabled: bool,
     marked: bool,
     swatches: &'a [Color32],
@@ -427,6 +428,7 @@ impl<'a> MenuItem<'a> {
             checked: None,
             danger: false,
             tone: None,
+            icon_tone: None,
             enabled: true,
             marked: false,
             swatches: &[],
@@ -453,6 +455,12 @@ impl<'a> MenuItem<'a> {
     /// Label and icon colour.
     pub fn tone(mut self, tone: Color32) -> Self {
         self.tone = Some(tone);
+        self
+    }
+
+    /// Icon colour in every state; the label keeps its colour and [`Self::danger`] wins.
+    pub fn icon_tone(mut self, tone: Color32) -> Self {
+        self.icon_tone = Some(tone);
         self
     }
 
@@ -591,6 +599,10 @@ fn menu_row(ui: &mut Ui, item: &MenuItem<'_>, trail: Trail) -> Response {
             (Ink::Tone(tone), _) => (tone, tone),
             (Ink::Normal, true) => (t.text, t.text),
             (Ink::Normal, false) => (t.text, t.icon),
+        };
+        let icon_ink = match (item.icon_tone, item.danger) {
+            (Some(tone), false) => tone,
+            _ => icon_ink,
         };
         let slot = Rect::from_min_size(
             pos2(rect.left() + m.pad.x, rect.center().y - m.icon_md / 2.0),

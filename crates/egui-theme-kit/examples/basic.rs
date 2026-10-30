@@ -139,6 +139,17 @@ impl Panes {
                     });
                 }
             }
+            if ui.button("Undo toast").clicked() {
+                use egui_theme_kit::toast::{ToastAction, action_toast};
+                let undo = ToastAction::new("Undo", egui::Id::unique("basic.undo"));
+                self.toasts.add(action_toast(
+                    ui.ctx(),
+                    ToastKind::Info,
+                    "Deleted the demo layer",
+                    undo,
+                    8.0,
+                ));
+            }
         });
     }
 }
@@ -220,6 +231,14 @@ impl eframe::App for App {
                 });
             }
             self.panes.toasts.show(ui);
+            for _ in egui_theme_kit::toast::take_actions(&ctx) {
+                self.panes.toasts.add(egui_toast::Toast {
+                    kind: egui_toast::ToastKind::Success,
+                    text: "Undone".into(),
+                    options: egui_toast::ToastOptions::default().duration_in_seconds(3.0),
+                    ..Default::default()
+                });
+            }
         }
 
         debug_panel::show(&ctx);

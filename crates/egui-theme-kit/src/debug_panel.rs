@@ -1,4 +1,4 @@
-//! The "Theme" debug window: [`show`] draws it when open, [`toggle`] and [`is_open`] drive it, and Ctrl+Alt+T toggles it.
+//! The "Theme" debug window: [`show`] draws it when open, [`toggle`] and [`is_open`] drive it, and [`DEFAULT_SHORTCUT`] or the one set with [`set_shortcut`] toggles it.
 
 #[cfg(feature = "files")]
 use std::path::PathBuf;
@@ -30,7 +30,8 @@ use super::{
     widget_theme,
 };
 
-const SHORTCUT: KeyboardShortcut =
+/// Ctrl+Alt+T, the shortcut that toggles the Theme window until [`set_shortcut`] replaces it.
+pub const DEFAULT_SHORTCUT: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::ALT), Key::T);
 /// Smoothing of the frame-time readout per sample.
 const EMA: f32 = 0.05;
@@ -77,6 +78,29 @@ pub fn set_open(ctx: &Context, open: bool) {
 /// Flips the Theme window.
 pub fn toggle(ctx: &Context) {
     set_open(ctx, !is_open(ctx));
+}
+
+/// Plugin holding the panel shortcut; it survives a memory reset.
+struct ShortcutSlot(Option<KeyboardShortcut>);
+
+impl egui::Plugin for ShortcutSlot {
+    fn debug_name(&self) -> &'static str {
+        "egui_theme_kit::debug_panel::ShortcutSlot"
+    }
+}
+
+/// Sets the shortcut [`show`] toggles the window with; `None` leaves opening it to [`toggle`] and [`set_open`].
+pub fn set_shortcut(ctx: &Context, shortcut: Option<KeyboardShortcut>) {
+    let replaced = ctx.with_plugin::<ShortcutSlot, _>(|slot| slot.0 = shortcut);
+    if replaced.is_none() {
+        ctx.add_plugin(ShortcutSlot(shortcut));
+    }
+}
+
+/// The shortcut [`show`] toggles the window with: [`DEFAULT_SHORTCUT`] unless [`set_shortcut`] changed it.
+pub fn shortcut(ctx: &Context) -> Option<KeyboardShortcut> {
+    ctx.with_plugin::<ShortcutSlot, _>(|slot| slot.0)
+        .unwrap_or(Some(DEFAULT_SHORTCUT))
 }
 
 /// Toast requests raised by the panel's tester buttons, drained by the app each frame.
@@ -214,7 +238,9 @@ fn store(ctx: &Context) -> Arc<dyn ThemeStore> {
 
 /// Draws the Theme window when it is open and handles its shortcut; call once per frame.
 pub fn show(ctx: &Context) {
-    if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT)) {
+    if let Some(shortcut) = shortcut(ctx)
+        && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
+    {
         toggle(ctx);
     }
     if !is_open(ctx) {
@@ -1038,6 +1064,49 @@ mod tests {
         }
         toggle(&ctx);
         frame(&ctx);
+        assert!(!is_open(&ctx));
+    }
+
+    /// One frame of the panel with `key` pressed under `modifiers`.
+    fn press(ctx: &Context, key: Key, modifiers: Modifiers) {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))),
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| show(ui.ctx()))
+            .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn the_shortcut_toggles_the_panel_and_can_be_replaced_or_turned_off() {
+        let ctx = themed_context();
+        let ctrl_alt = Modifiers::CTRL.plus(Modifiers::ALT);
+        assert_eq!(shortcut(&ctx), Some(DEFAULT_SHORTCUT));
+        press(&ctx, Key::T, ctrl_alt);
+        assert!(is_open(&ctx));
+        press(&ctx, Key::T, ctrl_alt);
+        assert!(!is_open(&ctx));
+
+        let f12 = KeyboardShortcut::new(Modifiers::NONE, Key::F12);
+        set_shortcut(&ctx, Some(f12));
+        assert_eq!(shortcut(&ctx), Some(f12));
+        press(&ctx, Key::T, ctrl_alt);
+        assert!(!is_open(&ctx));
+        press(&ctx, Key::F12, Modifiers::NONE);
+        assert!(is_open(&ctx));
+
+        set_shortcut(&ctx, None);
+        ctx.memory_mut(|m| *m = Default::default());
+        assert_eq!(shortcut(&ctx), None, "a memory reset keeps the choice");
+        press(&ctx, Key::F12, Modifiers::NONE);
+        press(&ctx, Key::T, ctrl_alt);
         assert!(!is_open(&ctx));
     }
 

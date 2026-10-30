@@ -161,6 +161,18 @@ impl From<PaintFn> for Icon {
     }
 }
 
+/// The pack icon's SVG, as a duotone pair when the pack carries a duo layer.
+#[cfg(feature = "icon-pack")]
+impl From<egui_icon_pack::Icon> for Icon {
+    fn from(icon: egui_icon_pack::Icon) -> Self {
+        let front = StaticImage::new(icon.uri(), icon.svg());
+        match icon.duo_svg() {
+            Some(back) => Self::duotone(front, StaticImage::new(icon.duo_uri(), back)),
+            None => Self::Image(front),
+        }
+    }
+}
+
 /// Square of a whole number of physical pixels whose origin sits on the pixel grid.
 fn snapped_square(center: Pos2, size: f32, pixels_per_point: f32) -> Rect {
     let px = (size * pixels_per_point).round().max(1.0);
@@ -225,6 +237,38 @@ mod tests {
         };
         assert_eq!(textured(Icon::Image(ring)), 1);
         assert_eq!(textured(Icon::duotone(ring, back)), 2);
+    }
+
+    #[cfg(feature = "icon-pack")]
+    #[test]
+    fn a_pack_icon_converts_to_an_image_or_a_duotone_pair() {
+        let plain = egui_icon_pack::Icon::new(
+            "ring",
+            "bytes://pack/ring.svg",
+            "bytes://pack/duo/ring.svg",
+            RING,
+            None,
+            "",
+            true,
+        );
+        let duo = egui_icon_pack::Icon::new(
+            "ring",
+            "bytes://pack/ring.svg",
+            "bytes://pack/duo/ring.svg",
+            RING,
+            Some(RING),
+            "",
+            true,
+        );
+        let front = StaticImage::new("bytes://pack/ring.svg", RING);
+        assert!(matches!(Icon::from(plain), Icon::Image(image) if image == front));
+        match Icon::from(duo) {
+            Icon::Duotone { front: f, back } => {
+                assert_eq!(f, front);
+                assert_eq!(back, StaticImage::new("bytes://pack/duo/ring.svg", RING));
+            }
+            other => panic!("expected a duotone pair, got {other:?}"),
+        }
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub struct TextButton<'a> {
     min_width: f32,
     max_width: f32,
     ink: Option<Color32>,
+    icon_tint: Option<Color32>,
     enabled: bool,
     mono: bool,
 }
@@ -41,6 +42,7 @@ impl<'a> TextButton<'a> {
             min_width: 0.0,
             max_width: f32::INFINITY,
             ink: None,
+            icon_tint: None,
             enabled: true,
             mono: false,
         }
@@ -76,6 +78,12 @@ impl<'a> TextButton<'a> {
     /// Label and icon colour in every state, in place of the kind's ink.
     pub fn ink(mut self, ink: Color32) -> Self {
         self.ink = Some(ink);
+        self
+    }
+
+    /// Icon colour in every state; the label keeps the kind's ink or [`Self::ink`].
+    pub fn icon_tint(mut self, tint: Color32) -> Self {
+        self.icon_tint = Some(tint);
         self
     }
 
@@ -167,7 +175,7 @@ impl<'a> TextButton<'a> {
                 pos2(left + m.icon_md / 2.0, rect.center().y),
                 Vec2::splat(m.icon_md),
             );
-            icon.paint(ui, slot, m.icon_md, ink);
+            icon.paint(ui, slot, m.icon_md, self.icon_tint.unwrap_or(ink));
         }
         let pos = pos2(
             left + icon_w,

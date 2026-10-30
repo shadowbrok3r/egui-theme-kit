@@ -109,7 +109,9 @@ Image cache keys must be unique per pack, and one key must always carry the same
 | font installer and glyph helpers | `egui_icon_pack::{install_fonts, icon, icon_sized, icon_colored}` and the `egui_icon_pack::phosphor` re-export (feature `font`) |
 
 `install_fonts` has the signature of a font installer hook, so it plugs into the font stack of
-`egui-theme-kit`: `FontConfig::new().installer(egui_icon_pack::install_fonts)`.
+`egui-theme-kit`: `FontConfig::new().installer(egui_icon_pack::install_fonts)`. With the kit's
+`icon-pack` feature, `egui_theme_kit::controls::Icon::from(icon)` replaces a local bridge to the
+kit's controls, as a duotone pair when the icon has a duo layer.
 
 ## Gallery
 

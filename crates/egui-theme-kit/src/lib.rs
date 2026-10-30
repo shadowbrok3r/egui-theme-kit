@@ -80,6 +80,7 @@
 //! | `controls` | no | themed control widgets |
 //! | `title-bar` | no | app-drawn window title bar, caption buttons, resize edges, `chrome` preferences and the Windows client-area fix; implies `eframe` |
 //! | `logger` | no | in-app log viewer |
+//! | `icon-pack` | no | `From<egui_icon_pack::Icon>` for `controls::Icon`, duotone when the pack has a duo layer |
 //!
 //! With `default-features = false` the core remains on egui alone: tokens, metrics, fonts, the widget
 //! theme, presets, saved themes and the debug panel, installed by [`init_ctx`]. With `eframe` the blur

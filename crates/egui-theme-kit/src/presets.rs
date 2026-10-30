@@ -162,6 +162,12 @@ fn forget_style(id: &str) {
     }
 }
 
+/// Whether `def` paints its panels, windows and popups fully opaque; as `PickerOptions::presets` it hides the glass presets.
+pub fn is_opaque(def: &PresetDef) -> bool {
+    let visuals = &def.style().visuals;
+    visuals.window_fill.a() == u8::MAX && visuals.panel_fill.a() == u8::MAX
+}
+
 /// The registered presets grouped by title, in first-seen order.
 pub fn grouped_presets() -> Vec<PresetGroupDefs> {
     let mut groups: Vec<PresetGroupDefs> = Vec::new();
@@ -1269,6 +1275,18 @@ mod tests {
         assert_eq!(preset("quartz").unwrap().description, "Replaced.");
         assert!(unregister_preset("quartz"));
         assert_eq!(preset("quartz").unwrap().description, original.description);
+    }
+
+    #[test]
+    fn glass_group_presets_are_translucent_and_graphite_and_noir_are_opaque() {
+        for def in builtin_presets() {
+            if def.group.to_lowercase().contains("glass") {
+                assert!(!is_opaque(&def), "{} is opaque", def.id);
+            }
+        }
+        for opaque in [PresetStyles::Graphite, PresetStyles::Noir] {
+            assert!(is_opaque(&opaque.def().unwrap()), "{}", opaque.as_str());
+        }
     }
 
     #[test]

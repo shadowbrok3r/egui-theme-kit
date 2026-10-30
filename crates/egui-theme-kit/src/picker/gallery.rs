@@ -35,9 +35,16 @@ const TAG_PT: f32 = 10.0;
 pub struct PresetGallery {
     search: String,
     card_data: HashMap<&'static str, (GlassParams, f32)>,
+    filter: Option<fn(&PresetDef) -> bool>,
 }
 
 impl PresetGallery {
+    /// This gallery listing only the presets `filter` accepts; `None` lists all.
+    pub fn with_filter(mut self, filter: Option<fn(&PresetDef) -> bool>) -> Self {
+        self.filter = filter;
+        self
+    }
+
     /// Draw previews without changing the live theme. Apply and save the returned
     /// preset through the host's appearance settings. The host owns scrolling.
     pub fn show(&mut self, ui: &mut Ui, selected: Option<&str>) -> Option<PresetDef> {
@@ -46,6 +53,7 @@ impl PresetGallery {
         cards(
             ui,
             &self.search,
+            self.filter,
             &mut self.card_data,
             &live,
             |def| {
@@ -73,6 +81,7 @@ pub(super) fn show(ui: &mut Ui, state: &mut PickerState, store: &dyn ThemeStore)
     let picked = cards(
         ui,
         &state.search,
+        state.options.presets,
         &mut state.card_data,
         &live,
         |def| {
@@ -114,6 +123,7 @@ fn search(ui: &mut Ui, search: &mut String, hint: &str) {
 fn cards(
     ui: &mut Ui,
     search: &str,
+    filter: Option<fn(&PresetDef) -> bool>,
     card_data: &mut HashMap<&'static str, (GlassParams, f32)>,
     live: &Tokens,
     cue: impl Fn(&PresetDef) -> Cue,
@@ -126,7 +136,7 @@ fn cards(
         let defs: Vec<PresetDef> = group
             .presets
             .into_iter()
-            .filter(|def| matches(def, &query))
+            .filter(|def| matches(def, &query) && filter.is_none_or(|keep| keep(def)))
             .collect();
         if defs.is_empty() {
             continue;
@@ -319,6 +329,32 @@ mod tests {
             Shape::Vec(shapes) => shapes.iter().find_map(|shape| text_center(shape, name)),
             _ => None,
         }
+    }
+
+    #[test]
+    fn a_filter_leaves_the_presets_it_rejects_out_of_the_gallery() {
+        let ctx = Context::default();
+        let mut gallery = PresetGallery::default().with_filter(Some(presets::is_opaque));
+        draw(&ctx, &mut gallery, 800.0, vec![])
+            .0
+            .drop_without_applying_deltas();
+        let (out, _, _) = draw(&ctx, &mut gallery, 800.0, vec![]);
+        let listed = |def: &PresetDef| {
+            out.shapes
+                .iter()
+                .any(|shape| text_center(&shape.shape, def.name).is_some())
+        };
+        let (opaque, glass): (Vec<_>, Vec<_>) = presets::builtin_presets()
+            .into_iter()
+            .partition(presets::is_opaque);
+        assert!(!opaque.is_empty() && !glass.is_empty());
+        for def in &glass {
+            assert!(!listed(def), "{} is listed", def.name);
+        }
+        for def in &opaque {
+            assert!(listed(def), "{} is missing", def.name);
+        }
+        out.drop_without_applying_deltas();
     }
 
     #[test]
