@@ -78,7 +78,8 @@
 //! | `data-table` | yes | `table_style` selection colors for `egui-data-table` |
 //! | `picker` | yes | the theme picker window |
 //! | `controls` | no | themed control widgets |
-//! | `title-bar` | no | app-drawn window title bar, caption buttons, resize edges, `chrome` preferences and the Windows client-area fix; implies `eframe` |
+//! | `title-bar-core` | no | app-drawn window title bar, caption buttons, resize edges and `chrome` preferences on egui alone, for bevy_egui and other hosts that carry out the viewport commands |
+//! | `title-bar` | no | `title-bar-core` and the Windows client-area fix; implies `eframe` |
 //! | `logger` | no | in-app log viewer |
 //! | `icon-pack` | no | `From<egui_icon_pack::Icon>` for `controls::Icon`, duotone when the pack has a duo layer |
 //!
@@ -89,7 +90,7 @@
 
 #[cfg(feature = "picker")]
 pub mod appearance;
-#[cfg(feature = "title-bar")]
+#[cfg(feature = "title-bar-core")]
 pub mod chrome;
 pub mod cli;
 pub mod colors;
@@ -113,7 +114,7 @@ pub mod store;
 pub mod studio;
 #[cfg(feature = "data-table")]
 pub mod table_style;
-#[cfg(feature = "title-bar")]
+#[cfg(feature = "title-bar-core")]
 pub mod title_bar;
 #[cfg(feature = "toast")]
 pub mod toast;

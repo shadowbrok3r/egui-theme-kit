@@ -28,7 +28,8 @@ Pin a revision for reproducible builds: add `rev = "<commit>"`.
 
 | Feature | What it gives the title bar |
 |---|---|
-| `title-bar` | `title_bar`, `chrome`, and on Windows the client-area fix. Implies `controls`. |
+| `title-bar` | `title_bar`, `chrome`, and on Windows the client-area fix. Implies `eframe` and `controls`. |
+| `title-bar-core` | `title_bar` and `chrome` without eframe and without the client-area fix; see [Bevy and other non-eframe hosts](#bevy-and-other-non-eframe-hosts). Implies `controls`. |
 | `files` | The user's custom-or-system choice is saved to disk. Without it the choice lasts for the process. |
 | `picker` | The theme picker window (the example's gear button opens it). |
 
@@ -254,6 +255,17 @@ Moves and resizes use `xdg_toplevel.move` and `.resize`; the cursor shapes use `
 ### Egui's pointer state after a window-manager drag
 
 While the window manager moves or resizes the window it owns the pointer, so egui sees the pointer leave and never sees the button release. egui then keeps the press, and the first click after the drag lands on the wrong widget or is lost. The library ends that press itself: when it sends `StartDrag` or `BeginResize` it registers a plugin that injects a release (preceded by a small pointer move so it is never a click) at the start of the next frame. Apps that send `StartDrag` or `BeginResize` from their own code should do the same; `title_bar` keeps the helper private.
+
+## Bevy and other non-eframe hosts
+
+`title-bar-core` builds `title_bar` and `chrome` on egui alone. Everything above applies except `client_area::install`, which needs eframe's creation context and is left out. What eframe does for the strip, the host does itself:
+
+- Carry out these root viewport commands from `FullOutput::viewport_output` on the window: `StartDrag` (start the window manager's move), `BeginResize(direction)` (start its resize; all eight directions), `Minimized(bool)`, `Maximized(bool)`, `Close` (best routed through the same path as the system close button, so an unsaved-changes prompt covers both) and `Decorations(bool)` (sent by `set_frameless` and `toggle_row`). `StartDrag` and `BeginResize` must be issued while the button is still down, in the frame egui sent them; a host that applies window changes later in the same frame is fine.
+- Before each pass, fill the root `ViewportInfo` in `RawInput::viewports`: `maximized` (the restore glyph, double-click and `window_edges` read it), `fullscreen` (`window_edges` steps aside), and `minimized` and `focused` if known; `inner_rect` and `outer_rect` are optional. Read them from the window manager each frame rather than tracking your own commands, so a maximize by a shortcut, edge tiling or drag-to-restore shows too.
+- Open the window undecorated when `Chrome::frameless`, with the 360 x 200 minimum `chrome::viewport` would set (`chrome::MIN_INNER_SIZE`).
+- Release the button in the host's own input state when you start the window manager's move or resize. The strip and `window_edges` end egui's press themselves (the `PointerRelease` plugin injects the release at the start of the next pass), but that fixes egui's state only. The host's input state, such as Bevy's `ButtonInput<MouseButton>`, never sees the release either: it keeps the button held, so the next press in the app is not a new press and the first click or drag after a window move or resize is lost.
+
+bevy_egui 0.43 drops `viewport_output` in its output system, so the commands need a small change there (for example, writing each root command as a Bevy message for an app system to apply to `Window` through `start_drag_move`, `start_drag_resize`, `set_minimized`, `set_maximized` and `decorations`, calling `ButtonInput::<MouseButton>::release(MouseButton::Left)` with the first two); bevy_winit's `WINIT_WINDOWS` gives `is_maximized`, `is_minimized`, `fullscreen` and `has_focus` for the `ViewportInfo`. jarvis-avatar does this on Bevy 0.20 and was checked under KWin on X11 and on Wayland.
 
 ## 8. What was verified
 

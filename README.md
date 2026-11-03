@@ -54,7 +54,8 @@ egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev =
 | `data-table` | yes | `table_style` selection colors for `egui-data-table` |
 | `picker` | yes | the theme picker window |
 | `controls` | no | painted control kit (buttons, toggles, fields, list rows, meters, glass card) |
-| `title-bar` | no | custom window title bar with caption buttons, drag area and resize edges, the saved custom-or-system choice (`chrome`) and the Windows client-area fix (implies `eframe` and `controls`) |
+| `title-bar-core` | no | custom window title bar with caption buttons, drag area and resize edges and the saved custom-or-system choice (`chrome`) on egui alone, for bevy_egui and other hosts that carry out the viewport commands (implies `controls`) |
+| `title-bar` | no | `title-bar-core` and the Windows client-area fix (implies `eframe`) |
 | `logger` | no | in-app log viewer (implies `controls`) |
 | `icon-pack` | no | `From<egui_icon_pack::Icon>` for `controls::Icon`, a duotone pair when the pack carries a duo layer (implies `controls`) |
 
@@ -140,7 +141,7 @@ egui_theme_kit::init_ctx(&ctx, KitConfig::new().parse_cli(false).store(store.clo
 - The kit's per-pass plugins run inside `Context::run_ui`, which bevy_egui calls every pass.
 - No blur backend is built: glass surfaces paint the tint only and `glass::support()` is `NotBuilt`. Give the picker `glass_available: Some(|| false)` so it says so, and `presets: Some(presets::is_opaque)` so it leaves out the glass presets, whose translucent windows would show the scene unblurred.
 - `debug_panel::set_shortcut(ctx, ..)` moves the panel off Ctrl+Alt+T, which some desktops reserve, or turns the shortcut off.
-- Not available without eframe: `init(cc)`, `init_context`, `save`, `EframeStorageStore`, `persist::load_stored`/`resolve_in` (use `persist::resolve_file_in`), `glass::install` and the `title-bar` feature, whose viewport commands bevy_egui does not carry out.
+- Not available without eframe: `init(cc)`, `init_context`, `save`, `EframeStorageStore`, `persist::load_stored`/`resolve_in` (use `persist::resolve_file_in`), `glass::install` and the `title-bar` feature's Windows client-area fix. The title bar itself is in `title-bar-core`; the host carries out its viewport commands and fills the root `ViewportInfo` (see "Bevy and other non-eframe hosts" in [docs/porting-title-bar.md](docs/porting-title-bar.md)).
 - Android hosts leave out `files` (no `rfd`); the eframe-free features check for `aarch64-linux-android`.
 
 ## Theming concepts
@@ -298,6 +299,7 @@ if frameless {
 - `--system-titlebar` or `EGUI_THEME_KIT_SYSTEM_TITLEBAR=1` keeps the system title bar for one launch without touching the saved choice.
 - `title_bar::windows::client_area::install(cc)` is the Windows `WM_NCCALCSIZE` fix for undecorated windows; call it on every platform, it does nothing elsewhere.
 - Run `cargo run -p egui-theme-kit --example frameless --features title-bar` for a complete app (add `-- --system-titlebar` for the system bar).
+- Without eframe (bevy_egui and other hosts) use `title-bar-core`: the same `title_bar` and `chrome` without `client_area`. The host carries out the strip's viewport commands, fills the root `ViewportInfo` and, when it starts a window-manager move or resize, releases the button in its own input state (the kit ends egui's press only); the porting guide lists all three.
 
 [docs/porting-title-bar.md](docs/porting-title-bar.md) is the step-by-step guide for an existing eframe app, with a before/after for the menu bar, the platform notes and the table of what was checked on real window managers (KWin on X11 and Wayland) and what was not (Windows, other desktops).
 

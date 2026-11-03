@@ -1,9 +1,11 @@
 //! App-drawn window top strip: mark, caller content, title, caption buttons, drag area and resize edges.
 //!
 //! Show [`TitleBar`] before any other panel and call [`window_edges`] last in the frame. Choose between
-//! this strip and the system one with [`crate::chrome`], and call [`windows::client_area::install`]
-//! once at startup. `docs/porting-title-bar.md` walks through moving an existing app over.
+//! this strip and the system one with [`crate::chrome`]. Under eframe (feature `title-bar`) call
+//! `windows::client_area::install` once at startup; another host carries out the strip's viewport
+//! commands and fills the root `ViewportInfo` itself. `docs/porting-title-bar.md` walks through both.
 
+#[cfg(feature = "title-bar")]
 pub mod windows;
 
 use egui::emath::GuiRounding as _;

@@ -27,8 +27,10 @@ glass = ["eframe", "eframe/glow"]
 files = ["dep:rfd", "dep:directories"]
 # Themed control widgets.
 controls = []
-# Custom window title bar with caption buttons, window chrome preferences and the Windows client-area fix; implies eframe.
-title-bar = ["eframe", "controls", "dep:windows", "dep:raw-window-handle"]
+# Custom window title bar with caption buttons, resize edges and window chrome preferences, on egui alone for Bevy and other non-eframe hosts.
+title-bar-core = ["controls"]
+# `title-bar-core` plus the Windows client-area fix; implies eframe.
+title-bar = ["title-bar-core", "eframe", "dep:windows", "dep:raw-window-handle"]
 # In-app log viewer.
 logger = ["controls", "dep:chrono", "dep:regex"]
 # Theme picker window and preset browser.
