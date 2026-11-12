@@ -13,6 +13,7 @@ A theme and styling system for [egui](https://github.com/emilk/egui) apps, insta
 - **Presets and saved themes.** A preset registry with 19 built-in looks (Graphite, Studio, Noir, Noir Glass, Frost, five neon glass, four soft glass, Tokyo Night and Storm, Rerun and Rerun OLED, Default egui), `register_preset` for your own, JSON import and export, bare `egui::Style` files accepted.
 - **Theme picker.** An embeddable settings panel (`picker::show` / `picker::window`): preset gallery with live miniatures, saved user themes, customization of density, text size, glass and token colors with contrast warnings, import and export. Persistence goes through a small non-blocking `ThemeStore` trait you can implement over any database, including one that opens after the window; `MemoryStore`, `JsonDirStore` and an eframe-storage store are included. The window title and id are configurable.
 - **Control kit, title bar and logger (optional).** Painted buttons, toggles, fields, list rows, meters, section headers and a glass card; a custom window title bar with caption buttons, drag and resize edges; an in-app log viewer. Icons are caller-provided, so any icon crate works; with `icon-pack`, `egui-icon-pack` icons convert directly, and `TextButton::icon_tint` / `MenuItem::icon_tone` colour an icon apart from its label.
+- **Dashboard and app widgets (optional).** Ring gauges with warn/danger thresholds, sparklines, multi-series line charts with legend and hover values, big value readouts, stat tiles with deltas and sparklines, action tiles, icon chips, status chips, avatars with a stable hue per name, check rows and responsive tile grids; sidebar `NavItem` rows with counts, status dots and an icon-only collapsed mode; a stepper and timeline rows; pulsing `StatusDot`s and `Kbd` keycap hints; a segmented `CodeInput` for one-time and pairing codes (paste, IME and mobile keyboards); a fuzzy-search `CommandPalette` (Ctrl+K) that fits a phone screen; and, with `qr`, a `QrCode` widget. Every one of them is in the controls gallery.
 - **Chrome for companion crates.** `egui_dock` styling, `egui-data-table` selection colors, `egui-toast` notifications, including toasts with an action button such as Undo.
 - **Frosted glass.** Real GPU backdrop blur behind floating surfaces, with a kill switch and a flat-fill fallback.
 - **Debug panel.** Ctrl+Alt+T (`debug_panel::set_shortcut` changes or removes it) opens a Theme window: presets, density, text size, glass dials, token swatches, widget gallery, JSON editor and frame timings.
@@ -53,11 +54,12 @@ egui-theme-kit = { git = "https://github.com/shadowbrok3r/egui-theme-kit", rev =
 | `toast` | yes | themed `egui-toast` notifications and the panel's toast tester |
 | `data-table` | yes | `table_style` selection colors for `egui-data-table` |
 | `picker` | yes | the theme picker window |
-| `controls` | no | painted control kit (buttons, toggles, fields, list rows, meters, glass card) |
+| `controls` | no | painted control kit (buttons, toggles, fields, list rows, meters, glass card, gauges and charts, tiles, nav rows, steppers, status dots, keycaps, code input, command palette) |
 | `title-bar-core` | no | custom window title bar with caption buttons, drag area and resize edges and the saved custom-or-system choice (`chrome`) on egui alone, for bevy_egui and other hosts that carry out the viewport commands (implies `controls`) |
 | `title-bar` | no | `title-bar-core` and the Windows client-area fix (implies `eframe`) |
 | `logger` | no | in-app log viewer (implies `controls`) |
 | `icon-pack` | no | `From<egui_icon_pack::Icon>` for `controls::Icon`, a duotone pair when the pack carries a duo layer (implies `controls`) |
+| `qr` | no | `controls::QrCode`, a QR code painted from a string as dark modules on a light tile, with the pure-Rust `qrcode` crate (implies `controls`) |
 
 The defaults match the author's apps, which use every one of these companions. For a smaller dependency tree use `default-features = false` and enable what you need; the core (tokens, metrics, fonts, widget theme, presets, saved themes, debug panel) needs only `egui`, `egui_extras` and a few small crates (`serde`, `serde_json`, `anyhow`, `log`). An eframe app adds `eframe` (or `glass`, which implies it) for `init(cc)` and eframe storage.
 

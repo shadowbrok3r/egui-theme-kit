@@ -1,8 +1,11 @@
 //! Owned control kit: fixed-height, self-painted controls that read [`Tokens`] and [`Metrics`].
 
 mod buttons;
+mod chart;
+mod code_input;
 mod fields;
 pub mod gallery;
+mod gauge;
 pub mod glass_card;
 mod icon;
 pub mod icons;
@@ -10,7 +13,14 @@ mod labels;
 mod layout;
 mod list;
 mod meter;
+mod nav;
+mod palette;
+#[cfg(feature = "qr")]
+mod qr;
+mod status;
+mod stepper;
 mod theme_preview;
+mod tiles;
 mod toggle;
 
 use std::sync::Arc;
@@ -27,10 +37,18 @@ pub use buttons::{
     IconBox, IconButton, TextButton, button, danger_button, ghost_button, icon_button,
     icon_text_button, primary_button, secondary_button,
 };
+pub use chart::{
+    CHART_H, LineChart, READOUT_VALUE_PT, Readout, Series, ValueFormatter, heat_tone, line_chart,
+    readout, series_tone,
+};
+pub use code_input::{
+    CODE_LEN, CodeCharset, CodeInput, CodeInputResponse, code_input, code_input_id,
+};
 pub use fields::{
     Dropdown, TextArea, TextField, ValueField, dropdown, search_field, text_area, text_field,
     value_field,
 };
+pub use gauge::{RING_DIAMETER, RingGauge, Sparkline, ring_gauge, sparkline};
 pub use icon::{Icon, PaintFn, StaticImage};
 pub use labels::{
     IconLabel, IconLink, Pill, Section, SpinnerSize, badge, count_badge, elided_label, fold_header,
@@ -49,7 +67,20 @@ pub use list::ListItem;
 pub use meter::{
     ProgressBar, Segment, Slider, meter, progress_bar, segmented, slider, usage_meter,
 };
+pub use nav::{NavItem, nav_item};
+pub use palette::{
+    CommandPalette, CommandPaletteState, FuzzyMatch, PALETTE_LIST_H, PALETTE_SHORTCUT, PALETTE_W,
+    PaletteItem, command_palette, fuzzy_match,
+};
+#[cfg(feature = "qr")]
+pub use qr::{QR_SIDE, QUIET_ZONE, QrCode, QrEcc, QrMatrix, qr_code};
+pub use status::{DOT_D, Kbd, StatusDot, kbd, kbd_shortcut, shortcut_text, split_keys, status_dot};
+pub use stepper::{Step, StepState, Stepper, TimelineRow, stepper, timeline_row};
 pub use theme_preview::{THEME_PREVIEW_W, theme_preview};
+pub use tiles::{
+    ActionTile, Avatar, Check, IconChip, StatTile, TILE_CHIP, TileMark, Trend, action_tile, avatar,
+    check_row, initials, name_hue, stat_tile, status_chip, tile_columns, tile_grid,
+};
 pub use toggle::{checkbox, toggle};
 
 pub(crate) use crate::kit::{

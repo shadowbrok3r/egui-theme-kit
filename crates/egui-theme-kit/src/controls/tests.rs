@@ -1213,3 +1213,509 @@ fn an_icon_tone_colours_a_menu_icon_unless_the_row_is_a_danger_row() {
     });
     assert!(!fills.contains(&tone), "{fills:?}");
 }
+
+fn key(key: egui::Key) -> Event {
+    Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+/// Every text one frame of `f` painted, flattened out of nested shapes.
+fn painted_texts(shapes: &[Shape]) -> Vec<String> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn dashboard_widgets_take_their_sizes_at_every_density() {
+    for density in Density::ALL {
+        let ctx = context(density);
+        let m = Metrics::for_density(density);
+        let values = [1.0, 3.0, 2.0, 5.0];
+        let (sizes, action_h) = run(&ctx, 2, |ui| {
+            let sizes = [
+                RingGauge::new(0.5, "50%")
+                    .diameter(64.0)
+                    .show(ui)
+                    .rect
+                    .size(),
+                Sparkline::new(&values, vec2(80.0, 24.0))
+                    .show(ui)
+                    .rect
+                    .size(),
+                StatTile::new(icons::GEAR, "12", "Label")
+                    .delta("+3", Trend::Up)
+                    .sparkline(&values)
+                    .width(260.0)
+                    .show(ui)
+                    .rect
+                    .size(),
+                ActionTile::new(icons::GEAR, "Title")
+                    .blurb("Blurb")
+                    .width(260.0)
+                    .show(ui)
+                    .rect
+                    .size(),
+                status_chip(ui, icons::CHECK, "Online", Color32::GREEN)
+                    .rect
+                    .size(),
+                IconChip::new(icons::GEAR).side(30.0).show(ui).rect.size(),
+                avatar(ui, "Dana Whitfield", 28.0).rect.size(),
+                LineChart::new(&[Series::new("a", &values)])
+                    .width(300.0)
+                    .height(100.0)
+                    .show(ui)
+                    .rect
+                    .size(),
+            ];
+            (sizes, ActionTile::height(ui))
+        });
+        assert_eq!(sizes[0], Vec2::splat(64.0), "{density:?}");
+        assert_eq!(sizes[1], vec2(80.0, 24.0), "{density:?}");
+        assert_eq!(sizes[2], vec2(260.0, StatTile::height()), "{density:?}");
+        assert_eq!(sizes[3], vec2(260.0, action_h), "{density:?}");
+        assert_eq!(sizes[4].y, m.control_h, "{density:?}");
+        assert_eq!(sizes[4].x, sizes[4].x.round(), "{density:?}");
+        assert_eq!(sizes[5], Vec2::splat(30.0), "{density:?}");
+        assert_eq!(sizes[6], Vec2::splat(28.0), "{density:?}");
+        assert_eq!(sizes[7], vec2(300.0, 100.0), "{density:?}");
+    }
+}
+
+#[test]
+fn row_widgets_take_their_metrics_height_at_every_density() {
+    for density in Density::ALL {
+        let ctx = context(density);
+        let m = Metrics::for_density(density);
+        let (nav, collapsed, check, kbd_rect, dot, stepper_h, timeline) = run(&ctx, 2, |ui| {
+            let nav = NavItem::new(icons::LIST, "Sessions")
+                .count(4, None)
+                .dot(Color32::GREEN, false)
+                .show(ui)
+                .rect;
+            let collapsed = NavItem::new(icons::LIST, "Sessions")
+                .collapsed(true)
+                .count(4, None)
+                .show(ui)
+                .rect;
+            let check = check_row(ui, Check::Good, "Reachable", "12 ms").rect;
+            let kbd_rect = kbd(ui, "Ctrl+Shift+K").rect;
+            let dot = StatusDot::new(Color32::GREEN).show(ui).rect;
+            let top = ui.cursor().top();
+            let steps = [
+                Step::new("One", StepState::Done),
+                Step::new("Two", StepState::Active),
+            ];
+            let _ = Stepper::new(&steps).width(400.0).show(ui);
+            let stepper_h = ui.cursor().top() - ui.spacing().item_spacing.y - top;
+            let timeline = TimelineRow::new("Started", StepState::Done)
+                .width(300.0)
+                .show(ui)
+                .rect;
+            (nav, collapsed, check, kbd_rect, dot, stepper_h, timeline)
+        });
+        assert_eq!(nav.height(), m.button_h + 4.0, "{density:?}");
+        assert_eq!(
+            collapsed.size(),
+            Vec2::splat(m.button_h + 4.0),
+            "{density:?}"
+        );
+        assert_eq!(check.height(), m.control_h, "{density:?}");
+        assert_eq!(kbd_rect.height(), 18.0, "{density:?}");
+        assert!(kbd_rect.width() > 3.0 * 18.0, "{density:?}: three caps");
+        assert_eq!(
+            dot.size(),
+            Vec2::splat(StatusDot::new(Color32::GREEN).side())
+        );
+        assert!((stepper_h - (26.0 + 2.0 * m.pad.y).max(m.button_h)).abs() < 0.01);
+        assert_eq!(timeline.width(), 300.0, "{density:?}");
+        assert!(timeline.height() >= 18.0, "{density:?}");
+    }
+}
+
+#[test]
+fn a_code_input_lays_out_its_cells_and_squeezes_on_a_narrow_row() {
+    let ctx = context(Density::Regular);
+    let m = Metrics::for_density(Density::Regular);
+    let (wide, narrow) = run(&ctx, 2, |ui| {
+        let mut a = String::new();
+        let wide = CodeInput::new(&mut a)
+            .length(8)
+            .group(4)
+            .id_salt("wide")
+            .show(ui)
+            .response
+            .rect;
+        let mut b = String::new();
+        let narrow = ui
+            .allocate_ui(vec2(200.0, 60.0), |ui| {
+                CodeInput::new(&mut b)
+                    .length(8)
+                    .id_salt("narrow")
+                    .show(ui)
+                    .response
+                    .rect
+            })
+            .inner;
+        (wide, narrow)
+    });
+    assert_eq!(wide.height(), m.button_h + 10.0);
+    assert!(wide.width() > 8.0 * 20.0, "{wide:?}");
+    assert!(narrow.width() <= 200.0 + 0.01, "{narrow:?}");
+}
+
+/// Draws a six-digit code input, returning its rect and output.
+fn draw_code(
+    ui: &mut Ui,
+    code: &mut String,
+    charset: CodeCharset,
+    out: &mut Option<CodeInputResponse>,
+) {
+    *out = Some(
+        CodeInput::new(code)
+            .charset(charset)
+            .id_salt("code")
+            .show(ui),
+    );
+}
+
+#[test]
+fn a_code_input_filters_typing_and_backspace_moves_back() {
+    let ctx = context(Density::Regular);
+    let mut code = String::new();
+    let mut out = None;
+    run_with(&ctx, Vec::new(), |ui| {
+        draw_code(ui, &mut code, CodeCharset::Digits, &mut out)
+    });
+    let rect = out.as_ref().map(|o| o.response.rect).expect("drawn");
+    click_at(&ctx, rect.center(), |ui| {
+        draw_code(ui, &mut code, CodeCharset::Digits, &mut out)
+    });
+    run_with(&ctx, vec![Event::Text("1a2-b3".into())], |ui| {
+        draw_code(ui, &mut code, CodeCharset::Digits, &mut out)
+    });
+    assert_eq!(code, "123");
+    assert!(out.as_ref().is_some_and(|o| o.changed && !o.completed));
+    run_with(&ctx, vec![key(egui::Key::Backspace)], |ui| {
+        draw_code(ui, &mut code, CodeCharset::Digits, &mut out)
+    });
+    assert_eq!(code, "12", "backspace removes the last cell");
+    let typed = "3456789"
+        .chars()
+        .map(|c| Event::Text(c.to_string()))
+        .collect();
+    run_with(&ctx, typed, |ui| {
+        draw_code(ui, &mut code, CodeCharset::Digits, &mut out)
+    });
+    assert_eq!(code, "123456", "typing stops at the last cell");
+    let o = out.as_ref().expect("drawn");
+    assert!(o.completed && o.full && o.changed);
+    run_with(&ctx, Vec::new(), |ui| {
+        draw_code(ui, &mut code, CodeCharset::Digits, &mut out)
+    });
+    let o = out.as_ref().expect("drawn");
+    assert!(o.full && !o.completed && !o.changed, "completed fires once");
+}
+
+#[test]
+fn a_pasted_code_fills_every_cell_and_letters_are_uppercased() {
+    let ctx = context(Density::Regular);
+    let mut code = "9".to_owned();
+    let mut out = None;
+    let charset = CodeCharset::Unambiguous;
+    run_with(&ctx, Vec::new(), |ui| {
+        draw_code(ui, &mut code, charset, &mut out)
+    });
+    let rect = out.as_ref().map(|o| o.response.rect).expect("drawn");
+    click_at(&ctx, rect.center(), |ui| {
+        draw_code(ui, &mut code, charset, &mut out)
+    });
+    run_with(&ctx, vec![Event::Paste("ab-cd ef".into())], |ui| {
+        draw_code(ui, &mut code, charset, &mut out)
+    });
+    assert_eq!(code, "ABCDEF", "a whole pasted code replaces the cells");
+    assert!(out.as_ref().is_some_and(|o| o.completed));
+    let mut code = String::new();
+    run_with(&ctx, vec![Event::Text("o0x1il".into())], |ui| {
+        draw_code(ui, &mut code, charset, &mut out)
+    });
+    assert_eq!(code, "X", "look-alikes are refused");
+}
+
+/// Commands for the palette tests, in sections.
+fn palette_items() -> Vec<PaletteItem<'static, u8>> {
+    vec![
+        PaletteItem::new(0, "Reset view").section("View"),
+        PaletteItem::new(1, "Show settings").section("View"),
+        PaletteItem::new(2, "Settings")
+            .section("App")
+            .shortcut("Ctrl+,"),
+        PaletteItem::new(3, "New session")
+            .icon(icons::PLUS)
+            .section("App")
+            .keywords(&["create"]),
+        PaletteItem::new(4, "Close").section("App"),
+    ]
+}
+
+#[test]
+fn palette_results_rank_prefixes_and_word_starts_first() {
+    let items = palette_items();
+    let ranked = palette::entries(&palette::rows(&items, "set"));
+    assert_eq!(ranked, [2, 1, 0]);
+    let grouped = palette::entries(&palette::rows(&items, ""));
+    assert_eq!(grouped, [0, 1, 2, 3, 4]);
+    assert_eq!(palette::entries(&palette::rows(&items, "create")), [3]);
+    let highlight = palette::rows(&items, "nse");
+    assert!(matches!(
+        &highlight[0],
+        palette::Row::Item { index: 3, positions } if positions == &[0, 4, 5]
+    ));
+}
+
+/// Shows the palette over one frame of `events`; returns what it picked.
+fn palette_frame(
+    ctx: &Context,
+    state: &mut CommandPaletteState,
+    items: &[PaletteItem<'static, u8>],
+    events: Vec<Event>,
+) -> Option<u8> {
+    let mut picked = None;
+    run_with(ctx, events, |ui| {
+        picked = CommandPalette::new().show(ui.ctx(), state, items);
+    });
+    picked
+}
+
+#[test]
+fn the_palette_moves_with_the_keys_and_runs_the_selection_on_enter() {
+    let ctx = context(Density::Regular);
+    let items = palette_items();
+    let mut state = CommandPaletteState::new();
+    assert_eq!(palette_frame(&ctx, &mut state, &items, Vec::new()), None);
+    state.open();
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    let down = key(egui::Key::ArrowDown);
+    palette_frame(&ctx, &mut state, &items, vec![down.clone(), down.clone()]);
+    assert_eq!(state.selected, 2);
+    palette_frame(&ctx, &mut state, &items, vec![key(egui::Key::ArrowUp)]);
+    assert_eq!(state.selected, 1);
+    palette_frame(&ctx, &mut state, &items, vec![key(egui::Key::PageDown)]);
+    assert_eq!(state.selected, 4, "a page stops at the last result");
+    palette_frame(&ctx, &mut state, &items, vec![down]);
+    assert_eq!(state.selected, 0, "the arrows wrap");
+    let picked = palette_frame(&ctx, &mut state, &items, vec![key(egui::Key::Enter)]);
+    assert_eq!(picked, Some(0));
+    assert!(!state.is_open(), "running a command closes the palette");
+}
+
+#[test]
+fn typing_filters_the_palette_and_escape_closes_it() {
+    let ctx = context(Density::Regular);
+    let items = palette_items();
+    let mut state = CommandPaletteState::new();
+    state.open();
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, vec![Event::Text("sett".into())]);
+    assert_eq!(state.query, "sett", "the query field holds focus");
+    assert_eq!(state.selected, 0);
+    let picked = palette_frame(&ctx, &mut state, &items, vec![key(egui::Key::Enter)]);
+    assert_eq!(picked, Some(2), "the best match runs");
+    state.open();
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, vec![Event::Text("zzz".into())]);
+    let shapes = painted(&ctx, 1, |ui| {
+        let _ =
+            CommandPalette::new()
+                .empty_text("Nothing found")
+                .show(ui.ctx(), &mut state, &items);
+    });
+    assert!(painted_texts(&shapes).iter().any(|t| t == "Nothing found"));
+    let picked = palette_frame(&ctx, &mut state, &items, vec![key(egui::Key::Enter)]);
+    assert_eq!(picked, None, "enter on no results runs nothing");
+    palette_frame(&ctx, &mut state, &items, vec![key(egui::Key::Escape)]);
+    assert!(!state.is_open());
+}
+
+#[test]
+fn the_palette_fits_a_phone_screen() {
+    let ctx = context(Density::Regular);
+    let items = palette_items();
+    let mut state = CommandPaletteState::new();
+    state.open();
+    let phone = |events| RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 800.0))),
+        events,
+        ..Default::default()
+    };
+    let mut shapes = Vec::new();
+    for _ in 0..3 {
+        let mut full = ctx.run_ui(phone(Vec::new()), |ui| {
+            let _ = CommandPalette::new().show(ui.ctx(), &mut state, &items);
+        });
+        full.textures_delta.clear();
+        shapes = full.shapes;
+    }
+    let screen = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 800.0));
+    let frame = shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            Shape::Rect(r) if r.rect.width() < 399.0 && r.rect.width() > 300.0 => Some(r.rect),
+            _ => None,
+        })
+        .next()
+        .expect("the palette frame");
+    assert!(screen.contains_rect(frame), "{frame:?}");
+}
+
+/// One frame at `time` seconds with `events`.
+fn run_at(ctx: &Context, time: f64, events: Vec<Event>, mut f: impl FnMut(&mut Ui)) -> Vec<Shape> {
+    let raw = RawInput {
+        time: Some(time),
+        ..input(events)
+    };
+    let mut full = ctx.run_ui(raw, |ui| {
+        CentralPanel::default().show(ui, |ui| f(ui));
+    });
+    full.textures_delta.clear();
+    let mut out = Vec::new();
+    fn flatten(shape: Shape, out: &mut Vec<Shape>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.into_iter().for_each(|s| flatten(s, out)),
+            other => out.push(other),
+        }
+    }
+    for clipped in full.shapes {
+        flatten(clipped.shape, &mut out);
+    }
+    out
+}
+
+#[test]
+fn a_collapsed_nav_row_shows_its_label_only_as_a_tooltip() {
+    let ctx = context(Density::Regular);
+    let label = "Sessions";
+    let mut rect = Rect::NOTHING;
+    let draw = |ui: &mut Ui, rect: &mut Rect| {
+        *rect = NavItem::new(icons::LIST, label)
+            .collapsed(true)
+            .show(ui)
+            .rect;
+    };
+    let shapes = run_at(&ctx, 0.0, Vec::new(), |ui| draw(ui, &mut rect));
+    assert!(!painted_texts(&shapes).iter().any(|t| t == label));
+    assert_eq!(
+        NavItem::new(icons::LIST, label)
+            .collapsed(true)
+            .hover_text(),
+        Some(label)
+    );
+    assert_eq!(NavItem::new(icons::LIST, label).hover_text(), None);
+    let p = rect.center();
+    run_at(&ctx, 0.1, vec![Event::PointerMoved(p)], |ui| {
+        draw(ui, &mut rect)
+    });
+    let mut shown = false;
+    for k in 1..6 {
+        let shapes = run_at(&ctx, 0.1 + k as f64, Vec::new(), |ui| draw(ui, &mut rect));
+        shown |= painted_texts(&shapes).iter().any(|t| t == label);
+    }
+    assert!(shown, "hovering shows the label");
+    let expanded = run_at(&ctx, 10.0, Vec::new(), |ui| {
+        let _ = NavItem::new(icons::LIST, label).width(200.0).show(ui);
+    });
+    assert!(painted_texts(&expanded).iter().any(|t| t == label));
+}
+
+#[test]
+fn a_pulsing_dot_repaints_and_a_still_one_does_not() {
+    let ctx = context(Density::Regular);
+    let repaint = |pulse: bool| {
+        let mut full = ctx.run_ui(input(Vec::new()), |ui| {
+            CentralPanel::default().show(ui, |ui| {
+                let _ = StatusDot::new(Color32::GREEN).pulse(pulse).show(ui);
+            });
+        });
+        full.textures_delta.clear();
+        full.viewport_output
+            .values()
+            .any(|v| v.repaint_delay == std::time::Duration::ZERO)
+    };
+    for _ in 0..4 {
+        let _ = repaint(false);
+    }
+    assert!(!repaint(false));
+    assert!(repaint(true));
+}
+
+#[cfg(feature = "qr")]
+#[test]
+fn a_qr_code_paints_dark_modules_on_a_light_tile_and_a_placeholder_when_too_long() {
+    let ctx = context(Density::Regular);
+    let fills = |data: String| {
+        let shapes = painted(&ctx, 2, |ui| {
+            CentralPanel::default().show(ui, |ui| {
+                let _ = QrCode::new(&data).size(120.0).caption("Scan").show(ui);
+            });
+        });
+        shapes
+            .iter()
+            .filter_map(|s| match s {
+                Shape::Rect(r) => Some((r.fill, r.rect)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let ok = fills("https://example.com/pair?code=ABCD".to_owned());
+    let tile = ok
+        .iter()
+        .find(|(fill, _)| *fill == Color32::WHITE)
+        .map(|(_, r)| *r)
+        .expect("a light tile");
+    assert_eq!(tile.size(), Vec2::splat(120.0));
+    let dark: Vec<Rect> = ok
+        .iter()
+        .filter(|(fill, _)| *fill == Color32::BLACK)
+        .map(|(_, r)| *r)
+        .collect();
+    assert!(dark.len() > 20, "{} dark runs", dark.len());
+    for r in &dark {
+        assert!(tile.contains_rect(*r), "{r:?} leaves the tile");
+    }
+    let quiet = tile.shrink(4.0 * 120.0 / 37.0 - 1.0);
+    assert!(
+        dark.iter().all(|r| quiet.contains_rect(*r)),
+        "the quiet zone stays clear"
+    );
+    let too_long = fills("x".repeat(5000));
+    assert!(!too_long.iter().any(|(fill, _)| *fill == Color32::BLACK));
+    assert!(!too_long.iter().any(|(fill, _)| *fill == Color32::WHITE));
+}
+
+#[test]
+fn the_dashboard_builders_take_glyph_strings_and_draw_under_every_preset() {
+    let ctx = themed_context();
+    for preset in MATCHABLE_PRESETS {
+        apply_preset(&ctx, preset);
+        run(&ctx, 2, |ui| {
+            let _ = NavItem::new("G", "Glyph").selected(true).show(ui);
+            let _ = IconChip::new("G").show(ui);
+            let _ = StatTile::new("G", "1", "Glyph").show(ui);
+            let _ = ActionTile::new("G", "Glyph").mark(TileMark::Busy).show(ui);
+            let _ = status_chip(ui, "G", "Glyph", Color32::GREEN);
+            let _ = PaletteItem::new(0, "Glyph").icon("G");
+            let _ = Readout::new("", "ms").caption("Empty").show(ui);
+            let _ = LineChart::new(&[]).height(60.0).show(ui);
+        });
+    }
+}

@@ -6,16 +6,20 @@ use egui::{
 };
 
 use super::{
-    BarKind, ButtonKind, Dropdown, Icon, IconBox, IconButton, IconLabel, IconLink, ListItem,
-    MenuButton, MenuItem, Pill, Preview, ProgressBar, Role, Section, Segment, Slider, SpinnerSize,
-    TextArea, TextButton, TextField, Tokens, ValueField, badge, bar, button, callout, card,
-    checkbox, count_badge, dialog_buttons_enabled, dialog_contents, dropdown, elided_label,
-    empty_state, form, form_row, ghost_button, hairline, heading, icon_button, icon_hyperlink,
-    icon_label, icon_link, icon_text_button, icons, kit, loading_row, loading_state, menu_body,
-    menu_check_item, menu_danger_item, menu_item, menu_picker, menu_separator, meter, note,
-    panel_header, pill, primary_button, search_field, section_header, section_label, segmented,
-    sides, spinner, status_label, subheading, submenu, text_field, tinted_spinner, toggle,
-    usage_meter, value_field, vline, with_preview,
+    ActionTile, Avatar, BarKind, ButtonKind, Check, CodeCharset, CodeInput, CommandPalette,
+    CommandPaletteState, Dropdown, Icon, IconBox, IconButton, IconChip, IconLabel, IconLink, Kbd,
+    LineChart, ListItem, MenuButton, MenuItem, NavItem, PALETTE_SHORTCUT, PaletteItem, Pill,
+    Preview, ProgressBar, Readout, RingGauge, Role, Section, Segment, Series, Slider, Sparkline,
+    SpinnerSize, StatTile, StatusDot, Step, StepState, Stepper, TextArea, TextButton, TextField,
+    TileMark, TimelineRow, Tokens, Trend, ValueField, avatar, badge, bar, button, callout, card,
+    check_row, checkbox, count_badge, dialog_buttons_enabled, dialog_contents, dropdown,
+    elided_label, empty_state, form, form_row, ghost_button, hairline, heading, heat_tone,
+    icon_button, icon_hyperlink, icon_label, icon_link, icon_text_button, icons, kbd, kbd_shortcut,
+    kit, loading_row, loading_state, menu_body, menu_check_item, menu_danger_item, menu_item,
+    menu_picker, menu_separator, meter, note, panel_header, pill, primary_button, search_field,
+    section_header, section_label, segmented, sides, spinner, status_chip, status_label,
+    subheading, submenu, text_field, tile_grid, tinted_spinner, toggle, usage_meter, value_field,
+    vline, with_preview,
 };
 use crate::widget_theme;
 
@@ -37,6 +41,31 @@ const ICON_SAMPLE: f32 = 20.0;
 const DIALOG_W: f32 = 420.0;
 /// Inner margin of the sample dialog.
 const DIALOG_MARGIN: i8 = 16;
+/// Narrowest tile the gallery's tile grids lay out.
+const TILE_MIN_W: f32 = 220.0;
+/// Width of the gallery's nav rows.
+const NAV_W: f32 = 220.0;
+/// Width of a nav row in the preview-state strip.
+const NAV_STATE_W: f32 = 150.0;
+/// Size of the gallery's standalone sparklines.
+const SPARK: Vec2 = Vec2::new(120.0, 32.0);
+/// Height of the gallery's line charts.
+const CHART_H: f32 = 140.0;
+/// Width of the gallery's steppers and timeline.
+const STEPS_W: f32 = 560.0;
+/// Width of the narrow stepper that drops its labels.
+const STEPS_NARROW_W: f32 = 220.0;
+/// Side of the gallery's QR codes.
+#[cfg(feature = "qr")]
+const QR_W: f32 = 148.0;
+/// Recent values the gallery's charts and sparklines draw.
+const LOAD: [f32; 24] = [
+    22.0, 25.0, 31.0, 28.0, 35.0, 41.0, 38.0, 44.0, 52.0, 49.0, 57.0, 61.0, 58.0, 55.0, 63.0, 70.0,
+    66.0, 72.0, 69.0, 74.0, 71.0, 78.0, 75.0, 81.0,
+];
+const HEAT: [f32; 16] = [
+    41.0, 43.0, 44.0, 47.0, 46.0, 50.0, 53.0, 52.0, 56.0, 58.0, 57.0, 61.0, 60.0, 63.0, 65.0, 64.0,
+];
 
 /// An answer on a checklist row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +97,13 @@ struct Samples {
     stock_text: String,
     stock_notes: String,
     stock_line: String,
+    otp: String,
+    pair: String,
+    nav: usize,
+    step: usize,
+    tile: usize,
+    palette: CommandPaletteState,
+    command: Option<&'static str>,
 }
 
 impl Default for Samples {
@@ -92,6 +128,13 @@ impl Default for Samples {
             stock_text: String::new(),
             stock_notes: String::new(),
             stock_line: "One line".to_owned(),
+            otp: "4071".to_owned(),
+            pair: String::new(),
+            nav: 0,
+            step: 2,
+            tile: 0,
+            palette: CommandPaletteState::default(),
+            command: None,
         }
     }
 }
@@ -126,6 +169,12 @@ pub fn show_with(ui: &mut Ui, extra: &[(&str, Icon)]) {
         sections(ui);
         surfaces(ui);
         lists(ui);
+        dashboard(ui, &mut s);
+        navigation(ui, &mut s);
+        status_and_entry(ui, &mut s);
+        palette(ui, &mut s);
+        #[cfg(feature = "qr")]
+        qr_codes(ui);
         bars(ui, &mut s);
         empty(ui);
         dialog(ui);
@@ -679,6 +728,439 @@ fn lists(ui: &mut Ui) {
                 .striped(i % 2 == 1)
                 .show(ui);
         }
+    });
+}
+
+fn dashboard(ui: &mut Ui, s: &mut Samples) {
+    if !section_header(ui, "gallery.dashboard", icons::GRID, "Dashboard") {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal(|ui| {
+        let _ = RingGauge::new(0.42, "42%").caption("CPU").show(ui);
+        let _ = RingGauge::new(0.81, "81%")
+            .caption("Context")
+            .thresholds(0.75, 0.9)
+            .show(ui);
+        let _ = RingGauge::new(0.96, "96%")
+            .caption("Disk")
+            .thresholds(0.75, 0.9)
+            .show(ui);
+        let _ = RingGauge::new(0.6, "3/5")
+            .caption("Steps")
+            .tone(t.secondary)
+            .diameter(56.0)
+            .show(ui);
+        let _ = RingGauge::new(None, "—").caption("Offline").show(ui);
+        vline(ui, VLINE_H);
+        ui.vertical(|ui| {
+            let _ = Sparkline::new(&LOAD, SPARK).show(ui);
+            let _ = Sparkline::new(&HEAT, SPARK)
+                .tone(t.warn)
+                .range(0.0, 100.0)
+                .wash(false)
+                .show(ui);
+        });
+    });
+    tile_grid(ui, TILE_MIN_W, 3, |ui, i, width| {
+        let tile = match i {
+            0 => StatTile::new(icons::CLOCK, "1.8 s", "Median turn time")
+                .delta("12%", Trend::Down)
+                .delta_tone(t.success)
+                .sparkline(&LOAD),
+            1 => StatTile::new(icons::LIST, "128k", "Tokens today")
+                .tone(t.secondary)
+                .delta("+8.4k", Trend::Up),
+            _ => StatTile::new(icons::FOLDER, "6", "Open sessions")
+                .tone(t.info)
+                .delta("no change", Trend::Flat),
+        };
+        let _ = tile.width(width).show(ui);
+    });
+    let marks = [
+        (TileMark::Go, "Open", "Go to the next step"),
+        (
+            TileMark::Busy,
+            "Syncing",
+            "Uploads the latest changes; this can take a minute",
+        ),
+        (TileMark::Done, "Verified", "Every check passed"),
+        (
+            TileMark::Warning,
+            "Review",
+            "Two items need a look before you continue",
+        ),
+        (TileMark::Error, "Failed", "The last run stopped early"),
+        (TileMark::None, "Plain", "No trailing mark"),
+    ];
+    tile_grid(ui, TILE_MIN_W, marks.len() + 2, |ui, i, width| {
+        let response = match marks.get(i) {
+            Some((mark, title, blurb)) => ActionTile::new(icons::PLAY, title)
+                .blurb(blurb)
+                .mark(*mark)
+                .selected(s.tile == i)
+                .width(width)
+                .show(ui),
+            None if i == marks.len() => ActionTile::new(icons::X, "Remove device")
+                .blurb("Forget this device and its saved sessions")
+                .danger(true)
+                .width(width)
+                .show(ui),
+            None => ActionTile::new(icons::GEAR, "Unavailable")
+                .blurb("Disabled tile")
+                .enabled(false)
+                .width(width)
+                .show(ui),
+        };
+        if response.clicked() && i < marks.len() {
+            s.tile = i;
+        }
+    });
+    states(ui, |ui, label| {
+        let _ = ActionTile::new(icons::FILE, label)
+            .blurb("Preview state")
+            .width(TILE_MIN_W - 40.0)
+            .show(ui);
+    });
+    ui.horizontal(|ui| {
+        let _ = IconChip::new(icons::GEAR).show(ui);
+        let _ = IconChip::new(icons::CHECK_CIRCLE).tone(t.success).show(ui);
+        let _ = IconChip::new(icons::WARNING)
+            .tone(t.warn)
+            .side(28.0)
+            .show(ui);
+        vline(ui, VLINE_H);
+        let _ = status_chip(ui, icons::CHECK_CIRCLE, "Online", t.success);
+        let _ = status_chip(ui, icons::CLOCK, "Waiting", t.warn);
+        let _ = status_chip(ui, icons::ERROR, "Offline", t.error);
+        vline(ui, VLINE_H);
+        let _ = avatar(ui, "Dana Whitfield", 28.0);
+        for name in ["workstation-01", "build-runner", "laptop"] {
+            let _ = Avatar::new(name)
+                .diameter(28.0)
+                .hue_from_name(true)
+                .show(ui)
+                .on_hover_text(name);
+        }
+    });
+    ui.horizontal_top(|ui| {
+        let _ = Readout::new("12.4", "GB")
+            .caption("Memory")
+            .detail("of 32 GB")
+            .show(ui);
+        ui.add_space(2.0 * ui.spacing().item_spacing.x);
+        let _ = Readout::new("78", "%")
+            .caption("Load")
+            .tone(heat_tone(&t, 0.78))
+            .show(ui);
+        ui.add_space(2.0 * ui.spacing().item_spacing.x);
+        let _ = Readout::new("", "ms").caption("Latency").show(ui);
+        ui.add_space(2.0 * ui.spacing().item_spacing.x);
+        let _ = Readout::new("3", "of 8")
+            .caption("Workers")
+            .size(20.0)
+            .show(ui);
+    });
+    let series = [
+        Series::new("Load", &LOAD),
+        Series::new("Heat", &HEAT).tone(t.warn),
+    ];
+    let _ = LineChart::new(&series)
+        .height(CHART_H)
+        .range(0.0, 100.0)
+        .slots(30)
+        .span("last 30 samples")
+        .show(ui);
+    ui.horizontal(|ui| {
+        let empty = [Series::new("Waiting", &[])];
+        let _ = LineChart::new(&empty)
+            .width(BAR_W)
+            .height(CHART_H / 2.0)
+            .empty_text("Collecting readings…")
+            .show(ui);
+        let (strip, _) = ui.allocate_exact_size(Vec2::new(BAR_W, 12.0), Sense::hover());
+        let steps = 20;
+        for k in 0..steps {
+            let share = k as f32 / (steps - 1) as f32;
+            let w = strip.width() / steps as f32;
+            let cell = egui::Rect::from_min_size(
+                strip.min + Vec2::new(k as f32 * w, 0.0),
+                Vec2::new(w.ceil(), strip.height()),
+            );
+            ui.painter().rect_filled(cell, 0.0, heat_tone(&t, share));
+        }
+    });
+    ui.allocate_ui(Vec2::new(LIST_W + 120.0, 0.0), |ui| {
+        let _ = check_row(ui, Check::Good, "Daemon reachable", "12 ms");
+        let _ = check_row(ui, Check::Warn, "Certificate", "expires in 6 days");
+        let _ = check_row(ui, Check::Bad, "Push token", "rejected by the server");
+        let _ = check_row(ui, Check::Unknown, "Relay", "");
+    });
+}
+
+fn navigation(ui: &mut Ui, s: &mut Samples) {
+    if !section_header(
+        ui,
+        "gallery.navigation",
+        icons::MENU,
+        "Navigation and steps",
+    ) {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(NAV_W);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let rows: [(Icon, &str); 4] = [
+                (icons::GRID, "Overview"),
+                (icons::LIST, "Sessions"),
+                (icons::FOLDER, "Projects"),
+                (icons::GEAR, "Settings"),
+            ];
+            for (i, (icon, label)) in rows.into_iter().enumerate() {
+                let mut item = NavItem::new(icon, label).selected(s.nav == i);
+                item = match i {
+                    1 => item.count(12, None),
+                    2 => item.dot(t.success, true),
+                    3 => item.badge("new", t.info),
+                    _ => item,
+                };
+                if item.show(ui).clicked() {
+                    s.nav = i;
+                }
+            }
+            let _ = NavItem::new(icons::FILE, "Archived")
+                .enabled(false)
+                .show(ui);
+        });
+        vline(ui, 5.0 * VLINE_H);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let rows: [(Icon, &str); 4] = [
+                (icons::GRID, "Overview"),
+                (icons::LIST, "Sessions"),
+                (icons::FOLDER, "Projects"),
+                (icons::GEAR, "Settings"),
+            ];
+            for (i, (icon, label)) in rows.into_iter().enumerate() {
+                let mut item = NavItem::new(icon, label)
+                    .collapsed(true)
+                    .selected(s.nav == i);
+                item = match i {
+                    1 => item.count(12, None),
+                    2 => item.dot(t.success, true),
+                    _ => item,
+                };
+                if item.show(ui).clicked() {
+                    s.nav = i;
+                }
+            }
+        });
+    });
+    states(ui, |ui, label| {
+        let _ = NavItem::new(icons::LIST, label)
+            .count(3, t.secondary)
+            .width(NAV_STATE_W)
+            .show(ui);
+    });
+    let steps = [
+        Step::new("Connect", StepState::Done),
+        Step::new("Authenticate", StepState::Done),
+        Step::new("Pair device", StepState::Active),
+        Step::new("Sync", StepState::Pending),
+        Step::new("Finish", StepState::Pending),
+    ];
+    ui.allocate_ui(Vec2::new(STEPS_W, 0.0), |ui| {
+        if let Some(i) = Stepper::new(&steps)
+            .selected(s.step)
+            .width(STEPS_W)
+            .show(ui)
+        {
+            s.step = i;
+        }
+        let failed = [
+            Step::new("Build", StepState::Done),
+            Step::new("Test", StepState::Warning),
+            Step::new("Deploy", StepState::Error),
+        ];
+        let _ = Stepper::new(&failed)
+            .clickable(false)
+            .width(STEPS_W)
+            .show(ui);
+    });
+    let _ = Stepper::new(&steps)
+        .selected(s.step)
+        .width(STEPS_NARROW_W)
+        .show(ui);
+    ui.allocate_ui(Vec2::new(STEPS_W, 0.0), |ui| {
+        let _ = TimelineRow::new("Session started", StepState::Done)
+            .detail("Connected to the daemon over the relay.")
+            .meta("09:14")
+            .show(ui);
+        let _ = TimelineRow::new("Running tests", StepState::Active)
+            .detail("Compiling 3 crates and running 214 tests; this row wraps its detail when it runs past the end of the row.")
+            .meta("09:15")
+            .busy(true)
+            .show(ui);
+        let _ = TimelineRow::new("Lint", StepState::Warning)
+            .meta("09:16")
+            .show(ui);
+        let _ = TimelineRow::new("Upload", StepState::Error)
+            .detail("The connection closed before the upload finished.")
+            .show(ui);
+        let _ = TimelineRow::new("Notify", StepState::Pending)
+            .last(true)
+            .show(ui);
+    });
+}
+
+fn status_and_entry(ui: &mut Ui, s: &mut Samples) {
+    if !section_header(ui, "gallery.status", icons::DOT, "Status, keys and codes") {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal(|ui| {
+        let _ = StatusDot::new(t.success).label("Online").show(ui);
+        let _ = StatusDot::new(t.warn).pulse(true).label("Working").show(ui);
+        let _ = StatusDot::new(t.error).label("Offline").show(ui);
+        let _ = StatusDot::new(t.info)
+            .pulse(true)
+            .diameter(12.0)
+            .label("Streaming")
+            .show(ui);
+        ui.add_enabled_ui(false, |ui| StatusDot::new(t.success).show(ui));
+        vline(ui, VLINE_H);
+        let _ = kbd(ui, "Ctrl+K");
+        let _ = kbd(ui, "Ctrl+Shift+P");
+        let _ = kbd(ui, "Ctrl++");
+        let _ = Kbd::new("Up+Down").show(ui);
+        let _ = kbd(ui, "Esc");
+        let _ = kbd_shortcut(ui, &PALETTE_SHORTCUT);
+    });
+    ui.horizontal(|ui| {
+        let out = CodeInput::new(&mut s.otp).id_salt("gallery.otp").show(ui);
+        if out.full {
+            let _ = status_chip(ui, icons::CHECK_CIRCLE, "Complete", t.success);
+        }
+    });
+    ui.horizontal(|ui| {
+        let _ = CodeInput::new(&mut s.pair)
+            .id_salt("gallery.pair")
+            .length(8)
+            .group(4)
+            .charset(CodeCharset::Unambiguous)
+            .show(ui);
+    });
+    ui.horizontal(|ui| {
+        let mut focused = "12".to_owned();
+        with_preview(ui, Preview::Focused, |ui| {
+            CodeInput::new(&mut focused).length(4).show(ui)
+        });
+        vline(ui, VLINE_H);
+        let mut invalid = "9310".to_owned();
+        let _ = CodeInput::new(&mut invalid)
+            .length(4)
+            .invalid(true)
+            .show(ui);
+        vline(ui, VLINE_H);
+        let mut masked = "551".to_owned();
+        let _ = CodeInput::new(&mut masked).length(4).masked(true).show(ui);
+        vline(ui, VLINE_H);
+        let mut disabled = "77".to_owned();
+        let _ = CodeInput::new(&mut disabled)
+            .length(4)
+            .enabled(false)
+            .show(ui);
+    });
+}
+
+/// Sample commands for the gallery's palette.
+fn commands() -> Vec<PaletteItem<'static, &'static str>> {
+    vec![
+        PaletteItem::new("new", "New session")
+            .icon(icons::PLUS)
+            .section("Sessions")
+            .shortcut("Ctrl+N"),
+        PaletteItem::new("open", "Open recent")
+            .icon(icons::CLOCK)
+            .detail("Pick from the last ten")
+            .section("Sessions")
+            .shortcut("Ctrl+R"),
+        PaletteItem::new("search", "Search transcript")
+            .icon(icons::SEARCH)
+            .section("Sessions")
+            .shortcut("Ctrl+F")
+            .keywords(&["find", "grep"]),
+        PaletteItem::new("pair", "Pair a device")
+            .icon(icons::SQUARE)
+            .detail("Show a pairing code")
+            .section("Devices"),
+        PaletteItem::new("machines", "Switch machine")
+            .icon(icons::GRID)
+            .section("Devices")
+            .keywords(&["host", "server"]),
+        PaletteItem::new("theme", "Toggle theme")
+            .icon(icons::GEAR)
+            .section("View")
+            .keywords(&["dark", "light", "appearance"]),
+        PaletteItem::new("density", "Change density")
+            .icon(icons::MENU)
+            .section("View"),
+        PaletteItem::new("logs", "Show logs")
+            .icon(icons::FILE)
+            .detail("Opens the log viewer")
+            .section("View")
+            .shortcut("Ctrl+Shift+L"),
+    ]
+}
+
+fn palette(ui: &mut Ui, s: &mut Samples) {
+    if !section_header(ui, "gallery.palette", icons::SEARCH, "Command palette") {
+        return;
+    }
+    ui.horizontal(|ui| {
+        if icon_text_button(ui, icons::SEARCH, "Open command palette").clicked() {
+            s.palette.open();
+        }
+        let text = match s.command {
+            Some(id) => format!("Last command: {id}"),
+            None => "No command run yet".to_owned(),
+        };
+        let _ = IconLabel::new(icons::INFO, &text)
+            .small(true)
+            .tone(Tokens::get(ui.ctx()).text_dim)
+            .show(ui);
+    });
+    let items = commands();
+    if let Some(id) =
+        CommandPalette::new()
+            .id_salt("gallery")
+            .show(ui.ctx(), &mut s.palette, &items)
+    {
+        s.command = Some(id);
+    }
+}
+
+#[cfg(feature = "qr")]
+fn qr_codes(ui: &mut Ui) {
+    if !section_header(ui, "gallery.qr", icons::SQUARE, "QR codes") {
+        return;
+    }
+    ui.horizontal_top(|ui| {
+        let _ = super::QrCode::new("https://example.com/pair?code=ABCD-EFGH")
+            .size(QR_W)
+            .caption("Scan to pair")
+            .show(ui);
+        let _ = super::QrCode::new("ABCD-EFGH")
+            .size(QR_W / 2.0)
+            .ecc(super::QrEcc::High)
+            .show(ui);
+        let long = "x".repeat(4000);
+        let _ = super::QrCode::new(&long)
+            .size(QR_W)
+            .caption("Too much data")
+            .show(ui);
     });
 }
 

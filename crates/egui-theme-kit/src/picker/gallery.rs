@@ -393,8 +393,10 @@ mod tests {
     #[test]
     fn tapping_a_preview_returns_the_preset_without_replacing_host_settings() {
         let ctx = Context::default();
-        let mut config = crate::appearance::ThemeConfig::default();
-        config.control_height = Some(44.0);
+        let mut config = crate::appearance::ThemeConfig {
+            control_height: Some(44.0),
+            ..Default::default()
+        };
         config.select_preset("studio");
         config.apply(&ctx, crate::appearance::Density::Touch);
         let before = ctx.global_style();
