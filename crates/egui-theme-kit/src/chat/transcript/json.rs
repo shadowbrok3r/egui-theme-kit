@@ -2,15 +2,18 @@
 
 use std::sync::Arc;
 
-use egui::{Id, Label, Response, Sense, TextFormat, TextStyle, Ui, UiBuilder, text::LayoutJob};
+use egui::{Id, Label, Sense, TextFormat, TextStyle, Ui, UiBuilder, text::LayoutJob};
 use egui_json_tree::{
-    DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals, pointer::JsonPointerSegment,
-    render::RenderContext, value::BaseValueType,
+    DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
+    pointer::JsonPointerSegment,
+    render::{DefaultRender, RenderContext},
+    value::BaseValueType,
 };
 use serde_json::Value;
 
+use super::shell::is_command_key;
 use crate::chat::icons::ChatIcons;
-use crate::chat::palette::ChatPalette;
+use crate::chat::palette::{ChatPalette, ShellColors};
 use crate::controls::{IconBox, IconButton};
 
 /// How deep a payload opens by default.
@@ -235,11 +238,12 @@ impl<'a> PayloadTree<'a> {
             let style = JsonTreeStyle::new()
                 .visuals(visuals.clone())
                 .font_id(font.clone());
+            let shell = p.shell;
             let tree = JsonTree::new(id.with("tree"), value)
                 .style(style)
                 .default_expand(default_expand)
-                .on_render_if(touch, move |ui, ctx| {
-                    render_click_only(ui, ctx, &visuals, &font);
+                .on_render(move |ui, ctx| {
+                    render_token(ui, ctx, &visuals, &shell, &font, touch);
                 });
             let response = tree.show(ui);
             if repeat {
@@ -285,35 +289,62 @@ fn show_text(ui: &mut Ui, id: Id, value: &Value, p: &ChatPalette) {
     ui.add(Label::new(job).sense(Sense::click()));
 }
 
-/// Draws a tree token as a click-only label so drags scroll the transcript on touch screens.
-fn render_click_only(
+/// Draws a tree token: strings wrap and command strings are shell-coloured; on touch every token is click-only.
+fn render_token(
     ui: &mut Ui,
     ctx: RenderContext<'_, '_, Value>,
     visuals: &JsonTreeVisuals,
+    shell: &ShellColors,
     font: &egui::FontId,
-) -> Response {
-    let (text, color) = match &ctx {
-        RenderContext::Property(c) => match &c.property {
-            JsonPointerSegment::Index(i) => (i.to_string(), visuals.array_idx_color),
-            JsonPointerSegment::Key(k) => (format!("\"{k}\""), visuals.object_key_color),
-        },
-        RenderContext::BaseValue(c) => {
+    touch: bool,
+) {
+    let job = match &ctx {
+        RenderContext::BaseValue(c) if c.value_type == BaseValueType::String => {
+            let command = matches!(
+                c.pointer.last(),
+                Some(JsonPointerSegment::Key(k)) if is_command_key(k)
+            );
             let shown = c.display_value.to_string();
-            let text = if c.value_type == BaseValueType::String {
-                format!("\"{shown}\"")
+            let color = visuals.get_color(&c.value_type);
+            let mut job = LayoutJob::default();
+            if command {
+                let quote = TextFormat::simple(font.clone(), color);
+                job.append("\"", 0.0, quote.clone());
+                super::shell::append(&mut job, &shown, font, shell);
+                job.append("\"", 0.0, quote);
             } else {
-                shown
+                job.append(
+                    &format!("\"{shown}\""),
+                    0.0,
+                    TextFormat::simple(font.clone(), color),
+                );
+            }
+            job
+        }
+        _ if !touch => {
+            ctx.render_default(ui);
+            return;
+        }
+        RenderContext::Property(c) => {
+            let (text, color) = match &c.property {
+                JsonPointerSegment::Index(i) => (i.to_string(), visuals.array_idx_color),
+                JsonPointerSegment::Key(k) => (format!("\"{k}\""), visuals.object_key_color),
             };
-            (text, visuals.get_color(&c.value_type))
+            LayoutJob::single_section(text, TextFormat::simple(font.clone(), color))
         }
-        RenderContext::ExpandableDelimiter(c) => {
-            (c.delimiter.as_ref().to_owned(), visuals.punctuation_color)
-        }
+        RenderContext::BaseValue(c) => LayoutJob::single_section(
+            c.display_value.to_string(),
+            TextFormat::simple(font.clone(), visuals.get_color(&c.value_type)),
+        ),
+        RenderContext::ExpandableDelimiter(c) => LayoutJob::single_section(
+            c.delimiter.as_ref().to_owned(),
+            TextFormat::simple(font.clone(), visuals.punctuation_color),
+        ),
     };
-    let mut job = LayoutJob::single_section(text, TextFormat::simple(font.clone(), color));
-    job.wrap.max_width = ui.available_width();
+    let mut job = job;
+    job.wrap.max_width = ui.available_width().max(48.0);
     job.wrap.break_anywhere = true;
-    ui.add(Label::new(job).sense(Sense::click()))
+    ui.add(Label::new(job).sense(Sense::click()));
 }
 
 #[cfg(test)]

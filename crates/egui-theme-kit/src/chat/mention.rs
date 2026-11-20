@@ -147,7 +147,7 @@ impl<'a> Iterator for WireSegments<'a> {
 }
 
 /// The mention at the start of `s` and its byte length.
-fn parse_mention(s: &str) -> Option<(MentionRef, usize)> {
+pub(crate) fn parse_mention(s: &str) -> Option<(MentionRef, usize)> {
     let body = s.strip_prefix(OPEN)?;
     let mut label = String::new();
     let mut chars = body.char_indices();

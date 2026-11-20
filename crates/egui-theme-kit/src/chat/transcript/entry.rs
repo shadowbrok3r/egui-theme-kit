@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use egui::TextureId;
 
-use super::cards::{ApprovalCard, QuestionCard};
+use super::cards::{ApprovalCard, PlanCard, QuestionCard};
 use crate::chat::types::{CowList, CowStr, Tone, UnixMs};
 
 /// One row of a transcript.
@@ -21,6 +21,7 @@ pub enum ChatEntry<'a> {
     Work(WorkItem<'a>),
     Approval(ApprovalCard<'a>),
     Question(QuestionCard<'a>),
+    Plan(PlanCard<'a>),
     /// Drawn by the app's callback.
     Custom {
         key: CowStr<'a>,
@@ -37,6 +38,7 @@ impl ChatEntry<'_> {
             Self::Work(w) => &w.key,
             Self::Approval(c) => &c.key,
             Self::Question(c) => &c.key,
+            Self::Plan(c) => &c.key,
         }
     }
 
@@ -49,6 +51,7 @@ impl ChatEntry<'_> {
             Self::Work(w) => EntryKind::Work(w.kind),
             Self::Approval(_) => EntryKind::Approval,
             Self::Question(_) => EntryKind::Question,
+            Self::Plan(_) => EntryKind::Plan,
             Self::Custom { .. } => EntryKind::Custom,
         }
     }
@@ -64,6 +67,7 @@ pub enum EntryKind {
     Work(WorkKind),
     Approval,
     Question,
+    Plan,
     Custom,
 }
 
