@@ -220,7 +220,12 @@ impl<'a> SessionItem<'a> {
             let galley = text_galley(ui, label, small.clone());
             title_right -= galley.size().x;
             let pos = pos2(title_right, (title_cy - galley.size().y / 2.0).round());
-            ui.painter().galley(pos, galley, p.text_faint);
+            let ink = if self.selected {
+                p.soft_faint
+            } else {
+                p.text_faint
+            };
+            ui.painter().galley(pos, galley, ink);
             title_right -= GAP;
         }
         let font = if self.selected || self.unread > 0 {
@@ -250,7 +255,12 @@ impl<'a> SessionItem<'a> {
         if !self.subtitle.is_empty() {
             let galley = elided(ui, self.subtitle, small, (sub_right - x).max(1.0));
             let pos = pos2(x, (sub_cy - galley.size().y / 2.0).round());
-            ui.painter().galley(pos, galley, p.text_dim);
+            let ink = if self.selected {
+                p.soft_dim
+            } else {
+                p.text_dim
+            };
+            ui.painter().galley(pos, galley, ink);
         }
     }
 }

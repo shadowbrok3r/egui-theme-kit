@@ -18,8 +18,8 @@ use egui::{AsIdSalt, IdSalt};
 pub use layout::BarLayout;
 pub use row::SessionItem;
 pub use sessions::{
-    MenuEntry, NewSession, NewSessionButton, RowKind, SessionList, SessionListAction, SessionRow,
-    SessionSection,
+    MenuEntry, MenuEntryState, NewSession, NewSessionButton, RowKind, RowMenuState, SessionList,
+    SessionListAction, SessionRow, SessionSection,
 };
 
 use super::transcript::DetailLevel;
@@ -238,6 +238,8 @@ pub struct SessionBar<'a, K> {
     title: CowStr<'a>,
     subtitle: Option<CowStr<'a>>,
     renamable: bool,
+    /// Hash of the session the card shows; a rename draft of another session is dropped.
+    session: Option<u64>,
     chips: &'a [OptionChip<'a, K>],
     buttons: &'a [BarButton<'a, K>],
     nav: Option<MessageNav>,
@@ -253,6 +255,7 @@ impl<'a, K: Clone + Hash> SessionBar<'a, K> {
             title: title.into(),
             subtitle: None,
             renamable: false,
+            session: None,
             chips: &[],
             buttons: &[],
             nav: None,
@@ -275,6 +278,12 @@ impl<'a, K: Clone + Hash> SessionBar<'a, K> {
     /// Double-clicking the title, or Rename in the overflow menu, edits it in place.
     pub fn renamable(mut self, renamable: bool) -> Self {
         self.renamable = renamable;
+        self
+    }
+
+    /// The session the card shows; an open rename of another session is discarded. Without it the title stands in.
+    pub fn session(mut self, key: impl Hash) -> Self {
+        self.session = Some(egui::util::hash(key));
         self
     }
 

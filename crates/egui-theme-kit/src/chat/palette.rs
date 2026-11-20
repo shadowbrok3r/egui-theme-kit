@@ -54,13 +54,19 @@ pub struct ChatPalette {
     /// Panel background that translucent fills composite over.
     pub base: Color32,
     pub text: Color32,
+    /// Secondary text; readable on `base`, `card_fill` and `popup_fill`.
     pub text_dim: Color32,
+    /// Meta text such as times; readable on `base`, `card_fill` and `popup_fill`.
     pub text_faint: Color32,
     pub link: Color32,
     pub accent: Color32,
     pub accent_soft: Color32,
     /// Text and icons on an `accent` fill.
     pub on_accent: Color32,
+    /// `text_dim` on an `accent_soft` fill, such as a selected row or an on toggle chip.
+    pub soft_dim: Color32,
+    /// `text_faint` on an `accent_soft` fill.
+    pub soft_faint: Color32,
     pub user_fill: Color32,
     pub user_stroke: Color32,
     pub user_text: Color32,
@@ -124,16 +130,26 @@ impl ChatPalette {
         let user_fill = t.tertiary_soft;
         let mention_fill = t.primary_soft;
         let chip_fill = t.field;
+        let on_panels = |c: Color32| {
+            [t.window, t.raised, base]
+                .into_iter()
+                .fold(c, |c, fill| legible(c, fill, base, MIN_TEXT_CONTRAST))
+        };
+        let text_dim = on_panels(t.text_dim);
+        let text_faint = on_panels(t.text_faint);
+        let on_soft = |c: Color32| legible(c, t.primary_soft, base, MIN_TEXT_CONTRAST);
         Self {
             dark: is_dark(base),
             base,
             text,
-            text_dim: t.text_dim,
-            text_faint: t.text_faint,
+            text_dim,
+            text_faint,
             link: accent_on_base(t.tertiary),
             accent: t.primary,
             accent_soft: t.primary_soft,
             on_accent: t.on_primary,
+            soft_dim: on_soft(text_dim),
+            soft_faint: on_soft(text_faint),
             user_fill,
             user_stroke: mix(user_fill, t.tertiary, USER_STROKE_MIX),
             user_text: legible(t.text, user_fill, base, MIN_TEXT_CONTRAST),
@@ -147,7 +163,7 @@ impl ChatPalette {
             separator: t.separator,
             chip_fill,
             chip_stroke: t.field_border,
-            chip_text: legible(t.text_dim, chip_fill, base, MIN_TEXT_CONTRAST),
+            chip_text: legible(text_dim, chip_fill, base, MIN_TEXT_CONTRAST),
             mention_fill,
             mention_text: legible(t.primary, mention_fill, base, MIN_TEXT_CONTRAST),
             running: accent_on_base(t.primary),
@@ -161,8 +177,8 @@ impl ChatPalette {
                 number: accent_on_base(t.warn),
                 boolean: accent_on_base(t.secondary),
                 null: accent_on_base(t.secondary),
-                index: t.text_dim,
-                punct: t.text_dim,
+                index: text_dim,
+                punct: text_dim,
                 highlight: t.primary.gamma_multiply(HIGHLIGHT_ALPHA),
             },
             shell: ShellColors {
@@ -292,6 +308,14 @@ mod tests {
                 ("user text", p.user_text, p.user_fill),
                 ("mention text", p.mention_text, p.mention_fill),
                 ("chip text", p.chip_text, p.chip_fill),
+                ("dim on base", p.text_dim, p.base),
+                ("dim on card", p.text_dim, p.card_fill),
+                ("dim on popup", p.text_dim, p.popup_fill),
+                ("faint on base", p.text_faint, p.base),
+                ("faint on card", p.text_faint, p.card_fill),
+                ("faint on popup", p.text_faint, p.popup_fill),
+                ("dim on soft", p.soft_dim, p.accent_soft),
+                ("faint on soft", p.soft_faint, p.accent_soft),
             ] {
                 let bg = composite(fill, p.base);
                 let ratio = contrast(composite(fg, bg), bg);

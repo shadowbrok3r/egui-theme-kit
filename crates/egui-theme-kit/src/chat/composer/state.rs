@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use super::edit::{self, byte_at, from_wire};
 use super::popup::Popup;
-use crate::chat::mention::{MentionRef, MentionSource, encode};
+use crate::chat::mention::{MentionRef, MentionSource, Resolution, encode};
 use crate::controls::CommandPaletteState;
 
 /// A mention chip in the buffer: the chars of its label and its target.
@@ -37,7 +37,7 @@ fn key_of(target: &MentionRef) -> TargetKey {
 #[derive(Clone, Debug, Default)]
 pub(super) struct LabelCache {
     revision: u64,
-    labels: HashMap<TargetKey, Option<String>>,
+    labels: HashMap<TargetKey, Resolution>,
 }
 
 impl LabelCache {
@@ -47,7 +47,7 @@ impl LabelCache {
         source: &dyn MentionSource,
         revision: u64,
         target: &MentionRef,
-    ) -> Option<String> {
+    ) -> Resolution {
         if revision != self.revision {
             self.labels.clear();
             self.revision = revision;
@@ -138,8 +138,9 @@ impl ComposerState {
         self.pending_cursor = Some(self.char_len());
     }
 
-    /// Appends a chip for `target` and a trailing space.
+    /// Appends a chip for `target` and a trailing space; the target is trusted without resolving.
     pub fn insert_mention(&mut self, target: MentionRef) {
+        self.picked.insert(key_of(&target));
         if !self.text.is_empty() && !self.text.ends_with(char::is_whitespace) {
             self.text.push(' ');
         }
@@ -148,7 +149,7 @@ impl ComposerState {
         self.pending_cursor = Some(cursor);
     }
 
-    /// Whether `target` was picked from suggestions in this composer.
+    /// Whether `target` was picked from suggestions or inserted by the app in this composer.
     pub fn was_picked(&self, target: &MentionRef) -> bool {
         self.picked.contains(&key_of(target))
     }
@@ -247,15 +248,18 @@ mod tests {
             fn suggest(&self, _: &str, _: usize) -> Vec<crate::chat::MentionCandidate> {
                 Vec::new()
             }
-            fn resolve(&self, t: &MentionRef) -> Option<String> {
+            fn resolve(&self, t: &MentionRef) -> Resolution {
                 self.0.set(self.0.get() + 1);
-                Some(format!("{}!", t.label))
+                Resolution::Label(format!("{}!", t.label))
             }
         }
         let source = Counting(Cell::new(0));
         let target = MentionRef::new("session", "1", "a");
         let mut cache = LabelCache::default();
-        assert_eq!(cache.resolve(&source, 0, &target), Some("a!".into()));
+        assert_eq!(
+            cache.resolve(&source, 0, &target),
+            Resolution::Label("a!".into())
+        );
         cache.resolve(&source, 0, &target);
         assert_eq!(source.0.get(), 1);
         cache.resolve(&source, 1, &target);

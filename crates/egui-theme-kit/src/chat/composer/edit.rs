@@ -95,6 +95,32 @@ fn diff_edit(old: &[char], new: &[char]) -> Edit {
     }
 }
 
+/// Char ranges of `spans` after `old` became `new`; `None` for chips the edit touches.
+pub(super) fn follow_edit(
+    old: &str,
+    new: &str,
+    spans: &[MentionSpan],
+) -> Vec<Option<Range<usize>>> {
+    let old_c: Vec<char> = old.chars().collect();
+    let new_c: Vec<char> = new.chars().collect();
+    let Some(edit) = find_edit(&old_c, &new_c, None, None) else {
+        return spans.iter().map(|s| Some(s.chars.clone())).collect();
+    };
+    spans
+        .iter()
+        .map(|s| {
+            if touches(&edit, &s.chars) {
+                None
+            } else if s.chars.start >= edit.old.end {
+                let shift = |c: usize| c - edit.old.len() + edit.inserted;
+                Some(shift(s.chars.start)..shift(s.chars.end))
+            } else {
+                Some(s.chars.clone())
+            }
+        })
+        .collect()
+}
+
 /// Whether `edit` changes chars of `span`; an insertion only counts strictly inside.
 fn touches(edit: &Edit, span: &Range<usize>) -> bool {
     if edit.old.is_empty() {
@@ -184,8 +210,9 @@ pub(super) fn reconcile(
     if undo {
         let text_c: Vec<char> = text.chars().collect();
         let region = start..start + ins_len;
-        let mut i = 0;
-        while i < graveyard.len() {
+        let mut i = graveyard.len();
+        while i > 0 {
+            i -= 1;
             let g = &graveyard[i];
             let fits = g.chars.end <= text_c.len()
                 && g.chars.start < region.end
@@ -205,8 +232,6 @@ pub(super) fn reconcile(
                     chars: g.chars.start - start..g.chars.end - start,
                     target: g.target,
                 });
-            } else {
-                i += 1;
             }
         }
     }
@@ -589,6 +614,56 @@ mod tests {
         );
         assert_eq!(undone.spans, spans);
         assert!(grave.is_empty());
+    }
+
+    #[test]
+    fn undo_restores_the_newest_of_two_chips_with_one_label() {
+        let (a, b) = (target("A", "Same"), target("B", "Same"));
+        let (old, spans_a) = with_chip("", &a, "");
+        let mut grave = Vec::new();
+        let cut = reconcile(
+            &old,
+            "@Sam",
+            &spans_a,
+            &mut grave,
+            Some(5..5),
+            Some(4),
+            false,
+        );
+        assert_eq!(cut.text, "");
+        let (_, spans_b) = with_chip("", &b, "");
+        let cut = reconcile(
+            &old,
+            "@Sam",
+            &spans_b,
+            &mut grave,
+            Some(5..5),
+            Some(4),
+            false,
+        );
+        assert_eq!(cut.text, "");
+        assert_eq!(grave.len(), 2);
+        let undone = reconcile(&cut.text, &old, &[], &mut grave, Some(0..0), Some(5), true);
+        assert_eq!(undone.spans.len(), 1);
+        assert_eq!(undone.spans[0].target.id, "B");
+        assert_eq!(grave.len(), 1);
+        assert_eq!(grave[0].target.id, "A");
+    }
+
+    #[test]
+    fn chips_follow_an_edit_before_them_and_drop_when_touched() {
+        let t = target("1", "Same");
+        let (old, spans) = with_chip("ab ", &t, " z");
+        assert_eq!(follow_edit(&old, &old, &spans), vec![Some(3..8)]);
+        assert_eq!(
+            follow_edit(&old, &format!("x{old}"), &spans),
+            vec![Some(4..9)]
+        );
+        assert_eq!(follow_edit(&old, "ab @Sme z", &spans), vec![None]);
+        assert_eq!(
+            follow_edit(&old, &format!("{old}!"), &spans),
+            vec![Some(3..8)]
+        );
     }
 
     #[test]

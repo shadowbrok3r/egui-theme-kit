@@ -10,10 +10,10 @@ use egui_theme_kit::chat::{
     Composer, ComposerAction, ComposerMode, ComposerState, CowList, Delivery, DetailLevel,
     EnterBehavior, Jump, LoadState, MentionCandidate, MentionRef, MentionSource, MenuEntry,
     MessageNav, NavStep, NewSessionButton, Notice, OptionChip, Payload, PlanCard, PlanStatus,
-    PlanStep, PlusItem, Question, QuestionCard, QuestionForm, QuestionItem, SendIntent, SessionBar,
-    SessionBarAction, SessionList, SessionListAction, SessionRow, SessionSection, SessionStatus,
-    SlashCommand, Tone, Transcript, TranscriptOptions, TranscriptState, UnixMs, UserMessage,
-    ViewItem, ViewMenu, WaitingBoard, WorkItem, WorkKind, WorkStatus, encode,
+    PlanStep, PlusItem, Question, QuestionCard, QuestionForm, QuestionItem, Resolution, SendIntent,
+    SessionBar, SessionBarAction, SessionList, SessionListAction, SessionRow, SessionSection,
+    SessionStatus, SlashCommand, Tone, Transcript, TranscriptOptions, TranscriptState, UnixMs,
+    UserMessage, ViewItem, ViewMenu, WaitingBoard, WorkItem, WorkKind, WorkStatus, encode,
 };
 use egui_theme_kit::controls::{IconBox, PaletteItem, icon_button, icons};
 use egui_theme_kit::kit::ButtonKind;
@@ -167,11 +167,13 @@ impl MentionSource for Mentions {
             .collect()
     }
 
-    fn resolve(&self, target: &MentionRef) -> Option<String> {
-        SESSIONS
-            .iter()
-            .find(|s| target.kind == "session" && s.id == target.id)
-            .map(|s| s.title.to_owned())
+    fn resolve(&self, target: &MentionRef) -> Resolution {
+        Resolution::found(
+            SESSIONS
+                .iter()
+                .find(|s| target.kind == "session" && s.id == target.id)
+                .map(|s| s.title.to_owned()),
+        )
     }
 }
 
@@ -831,6 +833,7 @@ impl ChatDemo {
             .selected(Some(&self.selected))
             .search(&mut self.search)
             .row_menu(&menu)
+            .mention_entry(true)
             .time_format(
                 &egui_theme_kit::chat::ClockFormat::default(),
                 Some(self.now),
@@ -895,6 +898,7 @@ impl ChatDemo {
             .status(s.status, None)
             .subtitle(s.subtitle)
             .renamable(true)
+            .session(self.selected)
             .chips(&chips)
             .buttons(&buttons)
             .nav(self.nav);
@@ -942,6 +946,7 @@ impl ChatDemo {
             show_thinking: self.thinking,
             max_width: Some(COLUMN_W),
             now: Some(self.now),
+            show_user_author: false,
         };
         let mut transcript = Transcript::new("chat_demo.transcript")
             .options(options)

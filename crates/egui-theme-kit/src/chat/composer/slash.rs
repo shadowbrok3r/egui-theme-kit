@@ -54,18 +54,37 @@ impl From<&SlashCommand<'_>> for super::popup::SlashPick {
     }
 }
 
-/// The enabled command `wire` invokes as `/name args`, with its arguments; unknown names give `None`.
-pub(super) fn parse_command(source: &dyn SlashSource, wire: &str) -> Option<(String, String)> {
+/// A known command typed as `/name args`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Parsed {
+    Run {
+        id: String,
+        args: String,
+    },
+    /// The command exists but is disabled; it is neither run nor sent.
+    Disabled,
+}
+
+/// The command `wire` invokes as `/name args`; unknown names give `None`.
+pub(super) fn parse_command(source: &dyn SlashSource, wire: &str) -> Option<Parsed> {
     let rest = wire.strip_prefix('/')?;
     let (name, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
     if name.is_empty() {
         return None;
     }
-    source
-        .commands(name)
+    let commands = source.commands(name);
+    let c = commands
         .iter()
-        .find(|c| c.enabled && (c.name.trim_start_matches('/') == name || c.id == name))
-        .map(|c| (c.id.to_string(), args.trim().to_owned()))
+        .filter(|c| c.name.trim_start_matches('/') == name || c.id == name)
+        .max_by_key(|c| c.enabled)?;
+    Some(if c.enabled {
+        Parsed::Run {
+            id: c.id.to_string(),
+            args: args.trim().to_owned(),
+        }
+    } else {
+        Parsed::Disabled
+    })
 }
 
 #[cfg(test)]
@@ -102,16 +121,19 @@ mod tests {
 
     #[test]
     fn known_commands_parse_and_unknown_stay_text() {
-        assert_eq!(
-            parse_command(&commands, "/compact"),
-            Some(("compact".into(), String::new()))
-        );
+        let run = |id: &str, args: &str| {
+            Some(Parsed::Run {
+                id: id.into(),
+                args: args.into(),
+            })
+        };
+        assert_eq!(parse_command(&commands, "/compact"), run("compact", ""));
         assert_eq!(
             parse_command(&commands, "/model  gpt x\n"),
-            Some(("model.set".into(), "gpt x".into()))
+            run("model.set", "gpt x")
         );
         assert_eq!(parse_command(&commands, "/foo bar"), None);
-        assert_eq!(parse_command(&commands, "/off"), None);
+        assert_eq!(parse_command(&commands, "/off now"), Some(Parsed::Disabled));
         assert_eq!(parse_command(&commands, "compact"), None);
         assert_eq!(parse_command(&commands, "/"), None);
     }

@@ -109,6 +109,18 @@ pub struct MenuEntry<'a, M> {
     pub danger: bool,
 }
 
+/// How a row menu entry appears on one row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MenuEntryState {
+    #[default]
+    Shown,
+    Disabled,
+    Hidden,
+}
+
+/// Decides per row how each [`MenuEntry`] appears.
+pub type RowMenuState<'a, K, M> = &'a dyn Fn(&K, &M) -> MenuEntryState;
+
 /// What the user did in the session list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionListAction<K, M> {
@@ -126,6 +138,8 @@ pub struct SessionList<'a, K, M> {
     search: Option<&'a mut String>,
     icon_only: bool,
     row_menu: &'a [MenuEntry<'a, M>],
+    row_menu_state: Option<RowMenuState<'a, K, M>>,
+    mention_entry: bool,
     time_format: Option<&'a dyn TimeFormat>,
     now: Option<UnixMs>,
 }
@@ -136,6 +150,8 @@ struct RowCtx<'a, K, M> {
     selected: Option<&'a K>,
     icon_only: bool,
     row_menu: &'a [MenuEntry<'a, M>],
+    row_menu_state: Option<RowMenuState<'a, K, M>>,
+    mention_entry: bool,
     format: &'a dyn TimeFormat,
     now: Option<UnixMs>,
 }
@@ -150,6 +166,8 @@ impl<'a, K: Clone + Hash + PartialEq, M: Clone> SessionList<'a, K, M> {
             search: None,
             icon_only: false,
             row_menu: &[],
+            row_menu_state: None,
+            mention_entry: false,
             time_format: None,
             now: None,
         }
@@ -182,6 +200,18 @@ impl<'a, K: Clone + Hash + PartialEq, M: Clone> SessionList<'a, K, M> {
         self
     }
 
+    /// Hides or disables row menu entries per row; every entry shows without it.
+    pub fn row_menu_state(mut self, state: RowMenuState<'a, K, M>) -> Self {
+        self.row_menu_state = Some(state);
+        self
+    }
+
+    /// Adds Mention in chat to every row menu; off by default.
+    pub fn mention_entry(mut self, show: bool) -> Self {
+        self.mention_entry = show;
+        self
+    }
+
     /// Formats the updated times; [`crate::chat::ClockFormat`] by default.
     pub fn time_format(mut self, format: &'a dyn TimeFormat, now: Option<UnixMs>) -> Self {
         self.time_format = Some(format);
@@ -198,6 +228,8 @@ impl<'a, K: Clone + Hash + PartialEq, M: Clone> SessionList<'a, K, M> {
             search,
             icon_only,
             row_menu,
+            row_menu_state,
+            mention_entry,
             time_format,
             now,
         } = self;
@@ -208,6 +240,8 @@ impl<'a, K: Clone + Hash + PartialEq, M: Clone> SessionList<'a, K, M> {
             selected,
             icon_only,
             row_menu,
+            row_menu_state,
+            mention_entry,
             format: time_format.unwrap_or(&fallback),
             now: now.or_else(UnixMs::now),
         };
@@ -287,18 +321,38 @@ fn row_ui<K: Clone + Hash + PartialEq, M: Clone>(
     let mut action = response
         .clicked()
         .then(|| SessionListAction::Open(row.key.clone()));
+    let entries: Vec<(&MenuEntry<'_, M>, bool)> = c
+        .row_menu
+        .iter()
+        .filter_map(|entry| {
+            match c
+                .row_menu_state
+                .map_or(MenuEntryState::Shown, |f| f(&row.key, &entry.id))
+            {
+                MenuEntryState::Shown => Some((entry, true)),
+                MenuEntryState::Disabled => Some((entry, false)),
+                MenuEntryState::Hidden => None,
+            }
+        })
+        .collect();
+    if !c.mention_entry && entries.is_empty() {
+        return action;
+    }
     response.context_menu(|ui| {
-        let icons = ChatIcons::get(ui.ctx());
-        if menu_item(ui, icons.mention, "Mention in chat").clicked() {
-            action = Some(SessionListAction::MentionInChat(row.key.clone()));
+        if c.mention_entry {
+            let icons = ChatIcons::get(ui.ctx());
+            if menu_item(ui, icons.mention, "Mention in chat").clicked() {
+                action = Some(SessionListAction::MentionInChat(row.key.clone()));
+            }
+            if !entries.is_empty() {
+                menu_separator(ui);
+            }
         }
-        if !c.row_menu.is_empty() {
-            menu_separator(ui);
-        }
-        for entry in c.row_menu {
+        for (entry, enabled) in &entries {
             let clicked = MenuItem::new(&entry.label)
                 .icon(entry.icon)
                 .danger(entry.danger)
+                .enabled(*enabled)
                 .show(ui)
                 .clicked();
             if clicked {

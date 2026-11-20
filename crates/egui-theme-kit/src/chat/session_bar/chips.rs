@@ -206,7 +206,8 @@ fn paint_chip<K>(ui: &Ui, rect: Rect, response: &Response, chip: &OptionChip<'_,
     if let Some(label) = parts.label {
         let w = label.size().x;
         let y = (cy - label.size().y / 2.0).round();
-        ui.painter().galley(pos2(x, y), label, p.chip_text);
+        let ink = if on { p.soft_dim } else { p.chip_text };
+        ui.painter().galley(pos2(x, y), label, ink);
         x += w + PART_GAP;
     }
     let w = parts.value.size().x;
@@ -230,7 +231,8 @@ fn paint_chip<K>(ui: &Ui, rect: Rect, response: &Response, chip: &OptionChip<'_,
         let side = caret_size(ui);
         let slot = Rect::from_center_size(pos2(x + PART_GAP + side / 2.0, cy), Vec2::splat(side));
         let icons = ChatIcons::get(ui.ctx());
-        icons.chevron_down.paint(ui, slot, side, p.chip_text);
+        let ink = if on { p.soft_dim } else { p.chip_text };
+        icons.chevron_down.paint(ui, slot, side, ink);
     }
     if focused {
         focus_ring(ui, rect, p.radius_chip, &t);

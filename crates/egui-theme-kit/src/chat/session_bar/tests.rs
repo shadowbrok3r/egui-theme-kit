@@ -7,7 +7,7 @@ use egui::{
 
 use super::layout::{badge_total, fit_count, nav_steps, nav_text, title_span};
 use super::sessions::{row_id, row_matches};
-use super::title_card::start_rename;
+use super::title_card::{owner_of, start_rename};
 use super::*;
 use crate::chat::types::{ClockFormat, CowStr, MessageNav, NavStep, SessionStatus, Tone, UnixMs};
 use crate::controls::icons;
@@ -343,7 +343,7 @@ fn renaming_commits_on_enter_and_cancels_on_escape() {
         let mut actions = Vec::new();
         let mut draw = |ui: &mut Ui, start: bool| {
             if start {
-                start_rename(ui, bar_id(ui), TITLE);
+                start_rename(ui, bar_id(ui), TITLE, owner_of(None, TITLE));
             }
             actions.extend(sample_bar(ui, &[], &[], NAV));
         };
@@ -363,6 +363,32 @@ fn renaming_commits_on_enter_and_cancels_on_escape() {
     let (cancelled, title_back) = run(Key::Escape);
     assert!(cancelled.is_empty(), "{cancelled:?}");
     assert!(title_back);
+}
+
+#[test]
+fn a_rename_draft_is_dropped_when_the_card_shows_another_session() {
+    let ctx = context();
+    let mut actions = Vec::new();
+    let mut draw = |ui: &mut Ui, session: &str, start: bool| {
+        if start {
+            start_rename(ui, bar_id(ui), TITLE, egui::util::hash("a"));
+        }
+        let bar = SessionBar::<&str>::new("bar", TITLE)
+            .renamable(true)
+            .session(session);
+        actions.extend(bar.show(ui));
+    };
+    frame(&ctx, 900.0, Vec::new(), |ui| draw(ui, "a", true));
+    frame(&ctx, 900.0, Vec::new(), |ui| draw(ui, "a", false));
+    let typed = vec![Event::Text("Disk check".into())];
+    frame(&ctx, 900.0, typed, |ui| draw(ui, "a", false));
+    let texts = frame(&ctx, 900.0, Vec::new(), |ui| draw(ui, "b", false));
+    assert!(has(&texts, TITLE));
+    frame(&ctx, 900.0, vec![key(Key::Enter)], |ui| {
+        draw(ui, "b", false)
+    });
+    frame(&ctx, 900.0, Vec::new(), |ui| draw(ui, "b", false));
+    assert!(actions.is_empty(), "{actions:?}");
 }
 
 #[test]
@@ -574,4 +600,71 @@ fn icon_only_lists_draw_no_text() {
     }
     assert!(!texts.iter().any(|(t, _)| t.starts_with("Today")));
     assert!(has(&texts, "4"), "the unread count stays on the dot");
+}
+
+#[test]
+fn row_menus_hide_and_disable_entries_per_row() {
+    let ctx = context();
+    let rows = list_rows();
+    let sections = [SessionSection {
+        title: "Today".into(),
+        rows: &rows,
+        collapsed_by_default: false,
+    }];
+    let menu = [
+        MenuEntry {
+            id: 1_u8,
+            label: "Close".into(),
+            icon: None,
+            danger: false,
+        },
+        MenuEntry {
+            id: 2_u8,
+            label: "Take over".into(),
+            icon: None,
+            danger: false,
+        },
+    ];
+    let state = |key: &u32, item: &u8| match (key, item) {
+        (1, 1) => MenuEntryState::Hidden,
+        (1, 2) => MenuEntryState::Disabled,
+        _ => MenuEntryState::Shown,
+    };
+    let actions = std::cell::RefCell::new(Vec::new());
+    let target = std::cell::Cell::new(None);
+    let draw = |ui: &mut Ui| {
+        target.set(Some(row_id(list_id(ui), &1_u32)));
+        actions.borrow_mut().extend(
+            SessionList::new("list", &sections)
+                .row_menu(&menu)
+                .row_menu_state(&state)
+                .show(ui),
+        );
+    };
+    frame(&ctx, 400.0, Vec::new(), draw);
+    let rect = target
+        .get()
+        .and_then(|id| ctx.read_response(id))
+        .map(|r| r.rect)
+        .expect("the row was drawn");
+    let p = rect.center();
+    let secondary = |pressed| Event::PointerButton {
+        pos: p,
+        button: PointerButton::Secondary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    frame(
+        &ctx,
+        400.0,
+        vec![Event::PointerMoved(p), secondary(true)],
+        draw,
+    );
+    frame(&ctx, 400.0, vec![secondary(false)], draw);
+    let texts = frame(&ctx, 400.0, Vec::new(), draw);
+    assert!(has(&texts, "Take over"), "{texts:?}");
+    assert!(!has(&texts, "Close"));
+    assert!(!has(&texts, "Mention in chat"));
+    click(&ctx, 400.0, rect_of(&texts, "Take over").center(), draw);
+    assert!(actions.borrow().is_empty(), "{:?}", actions.borrow());
 }

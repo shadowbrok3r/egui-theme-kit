@@ -22,6 +22,8 @@ pub(super) const MAX_ROWS: usize = 8;
 const LABEL_SHARE: f32 = 0.6;
 /// Radius of the status dot as a share of the icon size.
 const DOT_SHARE: f32 = 0.18;
+/// Height of a section header as a share of a row.
+const HEADER_SHARE: f32 = 0.7;
 
 /// A slash command copied out of the provider for later frames.
 #[derive(Clone, Debug)]
@@ -50,6 +52,7 @@ pub(super) enum Suggestion {
         target: MentionRef,
         detail: String,
         status: Option<SessionStatus>,
+        section: Option<String>,
         positions: Vec<usize>,
     },
     Slash {
@@ -65,6 +68,28 @@ impl Suggestion {
             Self::Slash { pick, .. } => pick.enabled,
         }
     }
+
+    /// The group a mention is listed under.
+    fn section(&self) -> Option<&str> {
+        match self {
+            Self::Mention { section, .. } => section.as_deref(),
+            Self::Slash { .. } => None,
+        }
+    }
+}
+
+/// Header label to draw before each row: the row's section where it starts a new group.
+fn headers(items: &[Suggestion]) -> Vec<Option<&str>> {
+    let mut last = None;
+    items
+        .iter()
+        .map(|item| {
+            let section = item.section();
+            let starts = section.is_some() && section != last;
+            last = section;
+            section.filter(|_| starts)
+        })
+        .collect()
 }
 
 /// The open popup: its trigger, rows and selected row.
@@ -106,16 +131,25 @@ fn rank<T>(query: &str, items: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<(T, Vec<
         .collect()
 }
 
-/// Ranked mention rows for `query`.
+/// Mention rows for `query` in the provider's order, grouped by section in order of first appearance.
 pub(super) fn mention_items(source: &dyn MentionSource, query: &str) -> Vec<Suggestion> {
-    let candidates = source.suggest(query, MAX_ROWS);
-    rank(query, candidates, |c| c.target.label.as_str())
+    let mut candidates = source.suggest(query, MAX_ROWS);
+    candidates.truncate(MAX_ROWS);
+    let mut order: Vec<Option<String>> = Vec::new();
+    for c in &candidates {
+        if !order.contains(&c.section) {
+            order.push(c.section.clone());
+        }
+    }
+    candidates.sort_by_key(|c| order.iter().position(|s| *s == c.section));
+    candidates
         .into_iter()
-        .map(|(c, positions)| Suggestion::Mention {
+        .map(|c| Suggestion::Mention {
+            positions: fuzzy_match(query, &c.target.label).map_or_else(Vec::new, |m| m.positions),
             target: c.target,
             detail: c.detail,
             status: c.status,
-            positions,
+            section: c.section,
         })
         .collect()
 }
@@ -165,18 +199,33 @@ pub(super) fn show(ui: &mut Ui, popup: &mut Popup, row_h: f32) -> Option<usize> 
     let m = Metrics::get(ui.ctx());
     let icons = ChatIcons::get(ui.ctx());
     let width = ui.available_width();
-    let height = row_h * popup.items.len() as f32;
+    let header_h = (row_h * HEADER_SHARE).round();
+    let heads = headers(&popup.items);
+    let header_count = heads.iter().flatten().count();
+    let height = row_h * popup.items.len() as f32 + header_h * header_count as f32;
     let (outer, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     paint_surface(ui, outer, SurfaceKind::Popup);
     let font = TextStyle::Body.resolve(ui.style());
     let small = TextStyle::Small.resolve(ui.style());
     let pad = m.pad.x;
     let mut clicked = None;
+    let mut y = outer.top();
     for (i, item) in popup.items.iter().enumerate() {
-        let rect = Rect::from_min_size(
-            pos2(outer.left(), outer.top() + row_h * i as f32),
-            vec2(width, row_h),
-        );
+        if let Some(section) = heads[i] {
+            let galley = highlighted(
+                ui,
+                section,
+                &[],
+                small.clone(),
+                (p.text_faint, p.text_faint),
+                width - 2.0 * pad,
+            );
+            let at = pos2(outer.left() + pad, y + header_h - galley.size().y);
+            ui.painter().galley(at, galley, p.text_faint);
+            y += header_h;
+        }
+        let rect = Rect::from_min_size(pos2(outer.left(), y), vec2(width, row_h));
+        y += row_h;
         let id = ui.scope_id().with(("egui_theme_kit.chat.suggestion", i));
         let sense = if item.enabled() {
             Sense::click()
@@ -212,6 +261,7 @@ pub(super) fn show(ui: &mut Ui, popup: &mut Popup, row_h: f32) -> Option<usize> 
                 detail,
                 status,
                 positions,
+                ..
             } => (
                 target.label.clone(),
                 positions.clone(),
@@ -300,22 +350,36 @@ mod tests {
     }
 
     #[test]
-    fn mention_rows_rank_by_fuzzy_score_and_cap() {
+    fn mention_rows_keep_the_provider_order_within_sections_and_cap() {
+        let in_section = |id: &str, label: &str, section: &str| MentionCandidate {
+            section: Some(section.to_owned()),
+            ..candidate(id, label)
+        };
         let source = |_: &str, _: usize| {
-            let mut v = vec![candidate("1", "Other thing"), candidate("2", "Fix scroll")];
+            let mut v = vec![
+                in_section("1", "Other thing", "desk"),
+                in_section("2", "Fix scroll", "lab"),
+                in_section("3", "Fix scroll", "desk"),
+            ];
             v.extend((0..20).map(|i| candidate(&i.to_string(), "zzz")));
             v
         };
         let rows = mention_items(&source, "fix");
         assert_eq!(rows.len(), MAX_ROWS);
-        let Suggestion::Mention {
-            target, positions, ..
-        } = &rows[0]
-        else {
+        let ids: Vec<&str> = rows
+            .iter()
+            .take(3)
+            .map(|r| match r {
+                Suggestion::Mention { target, .. } => target.id.as_str(),
+                Suggestion::Slash { .. } => "",
+            })
+            .collect();
+        assert_eq!(ids, vec!["1", "3", "2"]);
+        let Suggestion::Mention { positions, .. } = &rows[1] else {
             panic!("mention row expected");
         };
-        assert_eq!(target.id, "2");
         assert_eq!(positions, &vec![0, 1, 2]);
+        assert_eq!(headers(&rows)[..4], [Some("desk"), None, Some("lab"), None]);
     }
 
     #[test]

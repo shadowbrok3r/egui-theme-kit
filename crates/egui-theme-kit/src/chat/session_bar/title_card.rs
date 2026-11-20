@@ -31,8 +31,8 @@ const PICK_MAX_H: f32 = 280.0;
 /// Height of the rule between the button and jump groups, as a share of the row.
 const RULE_SHARE: f32 = 0.6;
 
-/// Rename draft and whether its edit has taken focus.
-type RenameDraft = (String, bool);
+/// Rename draft, whether its edit has taken focus, and the session it belongs to.
+type RenameDraft = (String, bool, u64);
 
 impl<K: Clone + Hash> SessionBar<'_, K> {
     pub fn show(self, ui: &mut Ui) -> Option<SessionBarAction<K>> {
@@ -164,8 +164,11 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
 
     /// Paints the title centred in `rect`, or the rename field while editing; returns a committed name.
     fn title(&self, ui: &mut Ui, id: Id, rect: Rect, layout: BarLayout) -> Option<String> {
-        if let Some(draft) = ui.data(|d| d.get_temp::<RenameDraft>(rename_id(id))) {
-            return self.rename_field(ui, id, rect, draft);
+        let owner = owner_of(self.session, &self.title);
+        match ui.data(|d| d.get_temp::<RenameDraft>(rename_id(id))) {
+            Some(draft) if draft.2 == owner => return self.rename_field(ui, id, rect, draft),
+            Some(_) => ui.data_mut(|d| d.remove::<RenameDraft>(rename_id(id))),
+            None => {}
         }
         let p = ChatPalette::of(ui);
         let size = TextStyle::Body.resolve(ui.style()).size;
@@ -191,7 +194,7 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
             });
         }
         if self.renamable && response.double_clicked() {
-            start_rename(ui, id, &self.title);
+            start_rename(ui, id, &self.title, owner);
         }
         if cut {
             response.on_hover_text(&*self.title);
@@ -201,7 +204,7 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
 
     /// The rename field in `rect`; returns the new name when it is committed and differs.
     fn rename_field(&self, ui: &mut Ui, id: Id, rect: Rect, draft: RenameDraft) -> Option<String> {
-        let (mut text, focused_once) = draft;
+        let (mut text, focused_once, owner) = draft;
         let edit_id = id.with("rename_edit");
         let mut child = ui.new_child(
             UiBuilder::new()
@@ -223,12 +226,12 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
                 .cursor
                 .set_char_range(Some(CCursorRange::select_all_str(&text)));
             state.store(ui.ctx(), edit_id);
-            ui.data_mut(|d| d.insert_temp(rename_id(id), (text, true)));
+            ui.data_mut(|d| d.insert_temp(rename_id(id), (text, true, owner)));
             return None;
         }
         let escaped = ui.input(|i| i.key_pressed(Key::Escape));
         if !escaped && !response.lost_focus() {
-            ui.data_mut(|d| d.insert_temp(rename_id(id), (text, true)));
+            ui.data_mut(|d| d.insert_temp(rename_id(id), (text, true, owner)));
             return None;
         }
         ui.data_mut(|d| d.remove::<RenameDraft>(rename_id(id)));
@@ -240,7 +243,7 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
     fn overflow(&self, ui: &mut Ui, id: Id) -> Option<SessionBarAction<K>> {
         let mut action = None;
         if self.renamable && menu_item(ui, None, "Rename").clicked() {
-            start_rename(ui, id, &self.title);
+            start_rename(ui, id, &self.title, owner_of(self.session, &self.title));
         }
         if self.renamable && !self.chips.is_empty() {
             menu_separator(ui);
@@ -320,8 +323,13 @@ fn rename_id(id: Id) -> Id {
     id.with("rename")
 }
 
-pub(super) fn start_rename(ui: &Ui, id: Id, title: &str) {
-    ui.data_mut(|d| d.insert_temp(rename_id(id), (title.to_owned(), false)));
+/// The session hash, else the title's hash.
+pub(super) fn owner_of(session: Option<u64>, title: &str) -> u64 {
+    session.unwrap_or_else(|| egui::util::hash(title))
+}
+
+pub(super) fn start_rename(ui: &Ui, id: Id, title: &str, owner: u64) {
+    ui.data_mut(|d| d.insert_temp(rename_id(id), (title.to_owned(), false, owner)));
 }
 
 /// Subtitle centred under the title: wrapped, or cut to one line.

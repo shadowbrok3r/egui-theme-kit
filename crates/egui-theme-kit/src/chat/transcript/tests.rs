@@ -267,6 +267,7 @@ fn every_entry_kind_draws_in_both_detail_levels_with_and_without_thinking() {
                 show_thinking,
                 max_width: Some(700.0),
                 now: Some(UnixMs(4_000)),
+                show_user_author: detail == DetailLevel::Detailed,
             };
             let out = run(
                 &ctx,
@@ -515,4 +516,182 @@ fn a_press_during_a_fling_is_not_a_tap() {
     assert!(suppress_taps(true, false, false, true, false));
     assert!(!suppress_taps(true, false, false, false, false));
     assert!(!suppress_taps(false, true, true, false, false));
+}
+
+#[test]
+fn the_user_author_shows_without_hover_when_asked() {
+    let mut entry = user("u-a", "hello".to_owned());
+    if let ChatEntry::User(m) = &mut entry {
+        m.author = Some(Cow::Borrowed("Logan"));
+    }
+    let entries = vec![entry];
+    for (always, shown) in [(false, false), (true, true)] {
+        let ctx = Context::default();
+        let mut state = TranscriptState::default();
+        let options = TranscriptOptions {
+            show_user_author: always,
+            ..TranscriptOptions::default()
+        };
+        let (_, shapes) = run_shapes(&ctx, &mut state, &entries, options, None, 2);
+        assert_eq!(
+            text_top(&shapes, "Logan").is_some(),
+            shown,
+            "always {always}"
+        );
+    }
+}
+
+#[test]
+fn an_over_wide_row_does_not_widen_later_rows() {
+    let entries = vec![
+        ChatEntry::Custom {
+            key: Cow::Borrowed("before"),
+        },
+        ChatEntry::Custom {
+            key: Cow::Borrowed("wide"),
+        },
+        ChatEntry::Custom {
+            key: Cow::Borrowed("after"),
+        },
+    ];
+    let ctx = Context::default();
+    let mut state = TranscriptState::default();
+    let mut widths = std::collections::HashMap::new();
+    for _ in 0..3 {
+        let mut out = ctx.run_ui(input(), |ui| {
+            Transcript::new("wide").show(ui, &mut state, &entries, |ui, key| {
+                widths.insert(key.to_owned(), ui.max_rect().width());
+                if key == "wide" {
+                    ui.allocate_exact_size(vec2(3000.0, 10.0), egui::Sense::hover());
+                }
+            });
+        });
+        out.textures_delta.clear();
+    }
+    assert!(widths["before"] <= 800.0, "{widths:?}");
+    assert_eq!(widths["before"], widths["after"], "{widths:?}");
+}
+
+#[test]
+fn a_work_group_keeps_its_choice_and_anchor_when_history_is_prepended() {
+    let mut tail = vec![
+        work("w-a", WorkKind::Tool, WorkStatus::Ok),
+        work("w-b", WorkKind::Tool, WorkStatus::Ok),
+    ];
+    tail.extend(long_history(40).into_iter().skip(1));
+    let mut all = long_history(20);
+    for (i, e) in all.iter_mut().enumerate() {
+        match e {
+            ChatEntry::User(m) => m.key = Cow::Owned(format!("old-u{i}")),
+            ChatEntry::Agent(m) => m.key = Cow::Owned(format!("old-m{i}")),
+            _ => {}
+        }
+    }
+    all.push(work("w-p", WorkKind::Tool, WorkStatus::Ok));
+    all.extend(tail.iter().cloned());
+
+    let mut state = TranscriptState::default();
+    state.set_group_open("w-a", Some(false));
+    let ctx = Context::default();
+    let options = TranscriptOptions::default();
+    run(
+        &ctx,
+        &mut state,
+        &tail,
+        options,
+        Some(LoadState::Available),
+        2,
+    );
+    state.following = false;
+    state.anchor = Some((key_hash("w-a"), 0.0));
+    let (_, shapes) = run_shapes(
+        &ctx,
+        &mut state,
+        &tail,
+        options,
+        Some(LoadState::Available),
+        3,
+    );
+    let before = text_top(&shapes, "reply 1").expect("row after the group drawn");
+
+    let kinds: Vec<EntryKind> = all.iter().map(|e| e.kind()).collect();
+    let group = runs(kinds.iter().copied())
+        .into_iter()
+        .find_map(|r| match r {
+            Run::Work(range) => Some(range),
+            Run::Single(_) => None,
+        })
+        .expect("a work group");
+    assert_eq!(all[group.start].key(), "w-p");
+    assert_eq!(group_choice(&state, all.as_slice(), group), Some(false));
+
+    let (_, shapes) = run_shapes(&ctx, &mut state, &all, options, Some(LoadState::Loading), 3);
+    assert!(!state.following());
+    assert_eq!(state.anchor.map(|a| a.0), Some(key_hash("w-p")));
+    let after = text_top(&shapes, "reply 1").expect("row after the group still drawn");
+    let slack = crate::controls::Metrics::get(&ctx).gap.y / 2.0 + 1.0;
+    assert!(
+        (before - after).abs() < slack,
+        "moved from {before} to {after}"
+    );
+}
+
+#[test]
+fn claimed_lines_split_out_of_agent_text_except_inside_fences() {
+    let text = "intro\n[media:a.png]\nmiddle\n```\n[media:b.png]\n```\n[media:c.png]";
+    let pieces = bubble::split_claimed(text, |l| l.starts_with("[media:"));
+    use bubble::Piece::{Line, Text};
+    assert_eq!(
+        pieces,
+        vec![
+            Text("intro\n"),
+            Line("[media:a.png]"),
+            Text("middle\n```\n[media:b.png]\n```\n"),
+            Line("[media:c.png]"),
+        ]
+    );
+    assert_eq!(
+        bubble::split_claimed("plain", |_| false),
+        vec![Text("plain")]
+    );
+}
+
+#[test]
+fn the_app_draws_claimed_agent_lines_in_place() {
+    struct Media(std::cell::RefCell<Vec<(String, String)>>);
+    impl AgentLines for Media {
+        fn claims(&self, line: &str) -> bool {
+            line.starts_with("[media:")
+        }
+        fn show(&self, ui: &mut Ui, key: &str, line: &str) {
+            ui.label("picture");
+            self.0.borrow_mut().push((key.to_owned(), line.to_owned()));
+        }
+    }
+    let media = Media(Default::default());
+    let entries = vec![agent("a1".into(), "before\n[media:x.png]\nafter")];
+    let ctx = Context::default();
+    let mut state = TranscriptState::default();
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let mut out = ctx.run_ui(input(), |ui| {
+            Transcript::new("media")
+                .agent_lines(&media)
+                .show(ui, &mut state, &entries, |_, _| {});
+        });
+        out.textures_delta.clear();
+        shapes = out.shapes;
+    }
+    let before = text_top(&shapes, "before").expect("text before drawn");
+    let picture = text_top(&shapes, "picture").expect("app line drawn");
+    let after = text_top(&shapes, "after").expect("text after drawn");
+    assert!(
+        before < picture && picture < after,
+        "{before} {picture} {after}"
+    );
+    assert!(text_top(&shapes, "[media:x.png]").is_none());
+    assert_eq!(
+        media.0.borrow()[0],
+        ("a1".to_owned(), "[media:x.png]".to_owned())
+    );
 }

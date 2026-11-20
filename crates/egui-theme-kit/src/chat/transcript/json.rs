@@ -342,9 +342,17 @@ fn render_token(
         ),
     };
     let mut job = job;
-    job.wrap.max_width = ui.available_width().max(48.0);
+    job.wrap.max_width = token_wrap_width(ui);
     job.wrap.break_anywhere = true;
-    ui.add(Label::new(job).sense(Sense::click()));
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    ui.add(Label::new(galley).sense(Sense::click()));
+}
+
+/// Width left for a token before the visible right edge.
+fn token_wrap_width(ui: &Ui) -> f32 {
+    let left = ui.available_rect_before_wrap().left();
+    let right = ui.max_rect().right().min(ui.clip_rect().right());
+    (right - left).max(48.0)
 }
 
 #[cfg(test)]
@@ -382,6 +390,28 @@ mod tests {
                 });
                 out.textures_delta.clear();
             }
+        }
+    }
+
+    #[test]
+    fn long_strings_wrap_inside_the_available_width() {
+        let ctx = egui::Context::default();
+        let long = "assertion failed: response.rect ".repeat(12);
+        let value = json!({ "message": long, "filter": "transcript::follows_bottom_after_a_send" });
+        for touch in [false, true] {
+            let mut width = 0.0;
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(Default::default(), |ui| {
+                    let inner = ui.allocate_ui(egui::vec2(220.0, 2000.0), |ui| {
+                        PayloadTree::new(Id::unique(("wrap", touch)), &value, PayloadRole::Result)
+                            .touch(touch)
+                            .show(ui);
+                    });
+                    width = inner.response.rect.width();
+                });
+                out.textures_delta.clear();
+            }
+            assert!(width <= 221.0, "touch {touch}: tree is {width} wide");
         }
     }
 }

@@ -186,14 +186,32 @@ pub struct MentionCandidate {
     pub section: Option<String>,
 }
 
+/// What a [`MentionSource`] knows about a mention target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Resolution {
+    /// The target exists under this label.
+    Label(String),
+    /// The target does not exist or the user cannot reach it.
+    Missing,
+    /// The source does not check targets; chips keep their own label.
+    Unknown,
+}
+
+impl Resolution {
+    /// `Label` for `Some`, `Missing` for `None`.
+    pub fn found(label: Option<String>) -> Self {
+        label.map_or(Self::Missing, Self::Label)
+    }
+}
+
 /// Supplies mention suggestions and current labels; the app checks access in both.
 pub trait MentionSource {
     /// Up to `limit` candidates for `query`, best first.
     fn suggest(&self, query: &str, limit: usize) -> Vec<MentionCandidate>;
 
-    /// The target's current label, or `None` when it does not resolve.
-    fn resolve(&self, _target: &MentionRef) -> Option<String> {
-        None
+    /// The target's current label; [`Resolution::Unknown`] unless the source checks targets.
+    fn resolve(&self, _target: &MentionRef) -> Resolution {
+        Resolution::Unknown
     }
 }
 

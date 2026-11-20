@@ -112,6 +112,12 @@ fn meta(ui: &mut Ui, rc: &mut RowCx<'_>, m: &UserMessage<'_>, hovered: bool) {
             ui.spacing_mut().item_spacing.x = rc.m.gap.x / 2.0;
             ui.set_min_height(side);
             let reveal = hovered || rc.touch;
+            if !reveal
+                && rc.options.show_user_author
+                && let Some(author) = &m.author
+            {
+                small(ui, rc, author, rc.p.text_faint);
+            }
             if reveal {
                 let copy = IconButton::new(rc.icons.copy, IconBox::Sm)
                     .tip("Copy message")
@@ -220,7 +226,22 @@ pub(crate) fn agent(ui: &mut Ui, rc: &mut RowCx<'_>, m: &AgentMessage<'_>, heade
     if m.text.trim().is_empty() && m.streaming {
         tinted_spinner(ui, SpinnerSize::Sm, rc.p.running);
     } else {
-        markdown::show(ui, rc, &m.text, ink, id, false);
+        match rc.agent_lines {
+            Some(lines) => {
+                for (n, piece) in split_claimed(&m.text, |l| lines.claims(l))
+                    .into_iter()
+                    .enumerate()
+                {
+                    match piece {
+                        Piece::Text(text) => markdown::show(ui, rc, text, ink, id.with(n), false),
+                        Piece::Line(line) => {
+                            ui.push_id(id.with(n), |ui| lines.show(ui, &m.key, line));
+                        }
+                    }
+                }
+            }
+            None => markdown::show(ui, rc, &m.text, ink, id, false),
+        }
         if m.streaming {
             tinted_spinner(ui, SpinnerSize::Sm, rc.p.running);
         }
@@ -253,6 +274,37 @@ pub(crate) fn agent(ui: &mut Ui, rc: &mut RowCx<'_>, m: &AgentMessage<'_>, heade
             rc.copy(ui, m.text.to_string());
         }
     }
+}
+
+/// A run of markdown, or one line the app draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Piece<'t> {
+    Text(&'t str),
+    Line(&'t str),
+}
+
+/// `text` cut around the lines `claims` accepts, skipping lines inside code fences.
+pub(crate) fn split_claimed(text: &str, claims: impl Fn(&str) -> bool) -> Vec<Piece<'_>> {
+    let mut out = Vec::new();
+    let (mut start, mut at, mut fenced) = (0, 0, false);
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let lead = body.trim_start();
+        if lead.starts_with("```") || lead.starts_with("~~~") {
+            fenced = !fenced;
+        } else if !fenced && claims(body) {
+            if start < at {
+                out.push(Piece::Text(&text[start..at]));
+            }
+            out.push(Piece::Line(body));
+            start = at + line.len();
+        }
+        at += line.len();
+    }
+    if start < text.len() {
+        out.push(Piece::Text(&text[start..]));
+    }
+    out
 }
 
 /// A faint centred line with an optional time.

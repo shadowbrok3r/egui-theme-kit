@@ -407,7 +407,10 @@ pub(crate) fn cached_json(ctx: &egui::Context, text: &str) -> Option<Arc<Vec<Val
 
 /// Width text may wrap to: never more than the visible viewport.
 pub(crate) fn wrap_width(ui: &Ui) -> f32 {
-    ui.available_width().min(ui.clip_rect().width()).max(48.0)
+    let left = ui.available_rect_before_wrap().left();
+    ui.available_width()
+        .min(ui.clip_rect().right() - left)
+        .max(48.0)
 }
 
 /// Renders a message body in `ink`; trees and code blocks are keyed under `id`.

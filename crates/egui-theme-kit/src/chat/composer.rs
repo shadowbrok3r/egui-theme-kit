@@ -26,7 +26,7 @@ pub use slash::{PlusItem, SlashCommand, SlashSource};
 pub use state::{ComposerState, MentionSpan, OutgoingText};
 
 use super::icons::ChatIcons;
-use super::mention::{MentionSource, clean_label};
+use super::mention::{MentionSource, Resolution, clean_label};
 use super::palette::ChatPalette;
 use super::surface::{SurfaceKind, surface_frame};
 use super::transcript::AttachmentChip;
@@ -93,6 +93,30 @@ impl Activity {
         }
     }
 
+    /// Whether a send with `intent` is allowed now.
+    pub fn allows(self, intent: SendIntent) -> bool {
+        match self {
+            Self::Idle => intent == SendIntent::Start,
+            Self::Busy {
+                can_steer,
+                can_queue,
+                ..
+            } => match intent {
+                SendIntent::Start => false,
+                SendIntent::Steer => can_steer,
+                SendIntent::Queue => can_queue,
+            },
+        }
+    }
+
+    /// While busy, the allowed intent other than [`Self::send_intent`]; Alt+Enter and a second button send with it.
+    pub fn alternate_intent(self) -> Option<SendIntent> {
+        let first = self.send_intent()?;
+        [SendIntent::Steer, SendIntent::Queue]
+            .into_iter()
+            .find(|i| *i != first && self.allows(*i))
+    }
+
     pub fn is_busy(self) -> bool {
         matches!(self, Self::Busy { .. })
     }
@@ -145,6 +169,7 @@ pub enum ComposerAction {
     Stop,
     Attach,
     RemoveAttachment(usize),
+    /// A slash command; emitted whatever the activity or send block, the app decides whether it runs.
     Command {
         id: String,
         args: String,
@@ -162,6 +187,7 @@ pub struct ComposerResponse {
     /// A suggestion was accepted this frame.
     pub accepted_suggestion: bool,
     /// Files are hovering over the composer; they are left in the input for the app.
+    /// Without a pointer position only the last focused composer still drawn, else the first drawn, claims them.
     pub file_hover: bool,
     /// Files were dropped over the composer this frame; they are left in the input for the app.
     pub files_dropped: bool,
@@ -367,7 +393,7 @@ impl<'a> Composer<'a> {
             state.refocus = true;
         }
         if focused {
-            handle_keys(&ctx, text_id, state, enter, &mut out);
+            handle_keys(&ctx, state, enter, mode.activity, &mut out);
         }
         let undo = focused && ctx.input(has_undo);
         let copying = focused
@@ -383,7 +409,7 @@ impl<'a> Composer<'a> {
         } else {
             min_rows
         };
-        let mut send_clicked = false;
+        let mut send_clicked = None;
         let frame = ui.scope_builder(UiBuilder::new().scope_id(parts.with("frame")), |ui| {
             surface_frame(
                 ui,
@@ -398,6 +424,7 @@ impl<'a> Composer<'a> {
                         mode: &mode,
                         show_attach,
                         can_send: !state.is_empty() || !attachments.is_empty(),
+                        command: is_command(state.text(), slash),
                         leading,
                         trailing,
                     };
@@ -438,15 +465,32 @@ impl<'a> Composer<'a> {
         let rect = surface.response.rect;
         let text = surface.inner;
 
-        if send_clicked || out.send {
+        if let Some(by_enter) = out.pick.take() {
+            update_popup(&ctx, text_id, state, editable, slash, mentions);
+            if state.popup.is_some() {
+                accept(&ctx, text_id, state, &mut out);
+            } else if by_enter && enter == EnterBehavior::Send {
+                out.send = true;
+            }
+        }
+        if let Some(intent) = send_clicked {
+            out.send = true;
+            out.intent = Some(intent);
+        }
+        if out.send {
             out.action = out
                 .action
                 .take()
-                .or_else(|| send(state, &mode, attachments, slash));
+                .or_else(|| send(state, &mode, out.intent, attachments, slash));
         }
 
+        let has_focus = ctx.memory(|mem| mem.has_focus(text_id));
+        let unplaced = claims_unplaced_drop(&ctx, text_id, has_focus);
         let (file_hover, files_dropped) = ctx.input(|i| {
-            let over = i.pointer.latest_pos().is_none_or(|pos| rect.contains(pos));
+            let over = i
+                .pointer
+                .latest_pos()
+                .map_or(unplaced, |pos| rect.contains(pos));
             (
                 over && !i.raw.hovered_files.is_empty(),
                 over && !i.raw.dropped_files.is_empty(),
@@ -504,8 +548,52 @@ struct Look {
 struct Outcome {
     action: Option<ComposerAction>,
     accepted: bool,
-    /// A send was asked for by key.
+    /// A send was asked for.
     send: bool,
+    /// Intent the send asked for; `None` uses [`Activity::send_intent`].
+    intent: Option<SendIntent>,
+    /// A popup pick key arrived; `true` when it was Enter. Applied after the text edit.
+    pick: Option<bool>,
+}
+
+/// The composer that takes files dropped without a pointer position, and the pass it was drawn in.
+#[derive(Clone, Copy)]
+struct DropClaim {
+    id: Id,
+    pass: u64,
+}
+
+/// Whether the composer `id` takes files dropped without a pointer position: the last focused one still drawn, else the first drawn this pass.
+fn claims_unplaced_drop(ctx: &Context, id: Id, focused: bool) -> bool {
+    let target_key = Id::unique("egui_theme_kit.chat.composer.drop_target");
+    let first_key = Id::unique("egui_theme_kit.chat.composer.first_drawn");
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| {
+        if focused {
+            d.insert_temp(target_key, DropClaim { id, pass });
+        }
+        let first = match d.get_temp::<DropClaim>(first_key) {
+            Some(c) if c.pass == pass => c.id,
+            _ => {
+                d.insert_temp(first_key, DropClaim { id, pass });
+                id
+            }
+        };
+        match d.get_temp::<DropClaim>(target_key) {
+            Some(c) if c.id == id => {
+                d.insert_temp(target_key, DropClaim { id, pass });
+                true
+            }
+            Some(c) if pass.saturating_sub(c.pass) <= 1 => false,
+            _ => first == id,
+        }
+    })
+}
+
+/// Whether `text` invokes a known slash command.
+fn is_command(text: &str, slash: Option<&dyn SlashSource>) -> bool {
+    text.starts_with('/')
+        && slash.is_some_and(|s| slash::parse_command(s, text.trim_start()).is_some())
 }
 
 /// Smallest icon box at least `target` tall, else the largest.
@@ -551,7 +639,7 @@ fn resolve_labels(
     for i in 0..state.spans().len() {
         let target = state.spans()[i].target.clone();
         match state.labels.resolve(source, revision, &target) {
-            Some(label) => {
+            Resolution::Label(label) => {
                 let label = clean_label(&label);
                 if !label.is_empty() && label != target.label {
                     let (text, spans) = state.parts_mut();
@@ -563,7 +651,8 @@ fn resolve_labels(
                 }
                 unresolved.push(false);
             }
-            None => unresolved.push(!state.was_picked(&target)),
+            Resolution::Missing => unresolved.push(!state.was_picked(&target)),
+            Resolution::Unknown => unresolved.push(false),
         }
     }
     unresolved
@@ -590,38 +679,48 @@ fn has_undo(i: &InputState) -> bool {
 /// Popup navigation, or Enter to send, consumed before the text edit sees them.
 fn handle_keys(
     ctx: &Context,
-    id: Id,
     state: &mut ComposerState,
     enter: EnterBehavior,
+    activity: Activity,
     out: &mut Outcome,
 ) {
     let plain = |m: Modifiers| m.is_none();
+    let shift_only = |m: Modifiers| m.shift && !m.alt && !m.ctrl && !m.command && !m.mac_cmd;
     if let Some(popup) = state.popup.as_mut() {
-        let (down, up, pick, close) = ctx.input_mut(|i| {
-            (
+        let (down, up, by_enter, by_tab, back, close) = ctx.input_mut(|i| {
+            let keys = (
                 take_key(i, Key::ArrowDown, plain),
                 take_key(i, Key::ArrowUp, plain),
-                take_key(i, Key::Enter, plain) + take_key(i, Key::Tab, plain),
+                take_key(i, Key::Enter, plain),
+                take_key(i, Key::Tab, plain),
+                take_key(i, Key::Tab, shift_only),
                 take_key(i, Key::Escape, plain),
-            )
+            );
+            take_key(i, Key::Tab, |_| true);
+            keys
         });
-        popup.step(down as isize - up as isize);
+        popup.step(down as isize - up as isize - back as isize);
         if close > 0 {
             state.dismissed = Some(popup.trigger.at());
             state.popup = None;
-        } else if pick > 0 {
-            accept(ctx, id, state, out);
+        } else if by_enter + by_tab > 0 {
+            out.pick = Some(by_enter > 0);
         }
         return;
     }
-    let sent = ctx.input_mut(|i| {
+    let (sent, alternate) = ctx.input_mut(|i| {
+        let alternate = take_key(i, Key::Enter, |m| m.alt && !m.shift && !m.command);
         let command = take_key(i, Key::Enter, |m| m.command && !m.shift && !m.alt);
         let bare = match enter {
             EnterBehavior::Send => take_key(i, Key::Enter, plain),
             EnterBehavior::Newline => 0,
         };
-        command + bare > 0
+        (command + bare > 0, alternate > 0)
     });
+    if alternate && let Some(intent) = activity.alternate_intent() {
+        out.send = true;
+        out.intent = Some(intent);
+    }
     out.send |= sent;
 }
 
@@ -680,20 +779,29 @@ fn insert_command(state: &mut ComposerState, name: &str) -> usize {
 fn send(
     state: &mut ComposerState,
     mode: &ComposerMode<'_>,
+    intent: Option<SendIntent>,
     attachments: &[AttachmentChip<'_>],
     slash: Option<&dyn SlashSource>,
 ) -> Option<ComposerAction> {
-    let intent = mode.activity.send_intent()?;
-    if mode.send_blocked.is_some() || (state.is_empty() && attachments.is_empty()) {
+    if state.is_empty() && attachments.is_empty() {
         return None;
     }
     let message = state.message();
-    let action = match slash.and_then(|s| slash::parse_command(s, message.wire.trim_start())) {
-        Some((id, args)) => ComposerAction::Command { id, args },
-        None => ComposerAction::Send { intent, message },
-    };
+    if let Some(parsed) = slash.and_then(|s| slash::parse_command(s, message.wire.trim_start())) {
+        let slash::Parsed::Run { id, args } = parsed else {
+            return None;
+        };
+        state.clear();
+        return Some(ComposerAction::Command { id, args });
+    }
+    let intent = intent
+        .filter(|i| mode.activity.allows(*i))
+        .or_else(|| mode.activity.send_intent())?;
+    if mode.send_blocked.is_some() {
+        return None;
+    }
     state.clear();
-    Some(action)
+    Some(ComposerAction::Send { intent, message })
 }
 
 /// Snapshot taken before the text edit ran.
@@ -834,8 +942,24 @@ impl TextArea<'_> {
         let font = TextStyle::Body.resolve(ui.style());
         let spans = state.spans().to_vec();
         let unresolved = self.unresolved.to_vec();
+        let before = state.text().to_owned();
         let mut layouter = move |ui: &Ui, buf: &dyn TextBuffer, wrap: f32| -> Arc<Galley> {
-            let mut job = chip_job(buf.as_str(), &spans, &unresolved, &font, &p);
+            let text = buf.as_str();
+            let mut job = if text == before {
+                chip_job(text, &spans, &unresolved, &font, &p)
+            } else {
+                let (moved, flags): (Vec<_>, Vec<_>) = edit::follow_edit(&before, text, &spans)
+                    .into_iter()
+                    .zip(spans.iter().zip(&unresolved))
+                    .filter_map(|(chars, (span, dead))| {
+                        chars.map(|chars| {
+                            let target = span.target.clone();
+                            (state::MentionSpan { chars, target }, *dead)
+                        })
+                    })
+                    .unzip();
+                chip_job(text, &moved, &flags, &font, &p)
+            };
             job.wrap.max_width = wrap;
             ui.painter().layout_job(job)
         };
@@ -983,6 +1107,8 @@ struct Controls<'s, 'a> {
     mode: &'s ComposerMode<'a>,
     show_attach: bool,
     can_send: bool,
+    /// The text is a known slash command, which runs whatever the activity.
+    command: bool,
     leading: Option<Slot<'a>>,
     trailing: Option<Slot<'a>>,
 }
@@ -996,7 +1122,7 @@ impl Controls<'_, '_> {
         text: TextArea<'_>,
         narrow: bool,
         out: &mut Outcome,
-    ) -> (Response, bool) {
+    ) -> (Response, Option<SendIntent>) {
         let side = self.look.icon_box.side(&Metrics::get(ui.ctx()));
         let gap = ui.spacing().item_spacing;
         let origin = ui.available_rect_before_wrap().min;
@@ -1037,7 +1163,7 @@ impl Controls<'_, '_> {
         (response, clicked)
     }
 
-    /// Leading and `+` at the left of `row`, the rest at its right; returns whether send was clicked.
+    /// Leading and `+` at the left of `row`, the rest at its right; returns the intent of a clicked send button.
     fn sides(
         self,
         ui: &mut Ui,
@@ -1045,12 +1171,13 @@ impl Controls<'_, '_> {
         row: Rect,
         align: Align,
         out: &mut Outcome,
-    ) -> bool {
+    ) -> Option<SendIntent> {
         let Self {
             look,
             mode,
             show_attach,
             can_send,
+            command,
             leading,
             trailing,
         } = self;
@@ -1107,9 +1234,14 @@ impl Controls<'_, '_> {
         {
             out.action = Some(ComposerAction::Stop);
         }
-        let clicked = send_button(&mut right, look, mode, can_send);
+        let alternate = mode
+            .activity
+            .alternate_intent()
+            .filter(|_| !command)
+            .and_then(|intent| send_button(&mut right, look, mode, can_send, Some(intent), false));
+        let primary = send_button(&mut right, look, mode, can_send, None, command);
         remember(ui, &mut state.right_w, right.min_rect().width());
-        clicked
+        alternate.or(primary)
     }
 }
 
@@ -1121,23 +1253,44 @@ fn remember(ui: &Ui, slot: &mut f32, width: f32) {
     }
 }
 
-/// The send, steer or queue button; returns whether it was clicked.
-fn send_button(ui: &mut Ui, look: &Look, mode: &ComposerMode<'_>, has_content: bool) -> bool {
-    let intent = mode.activity.send_intent();
-    let (icon, tip) = match intent {
-        Some(SendIntent::Steer) => (look.icons.steer, "Steer"),
-        Some(SendIntent::Queue) => (look.icons.queue, "Queue"),
-        _ => (look.icons.send, "Send"),
+/// A send, steer or queue button for `intent`, else for the activity's intent; returns the intent when clicked.
+fn send_button(
+    ui: &mut Ui,
+    look: &Look,
+    mode: &ComposerMode<'_>,
+    has_content: bool,
+    intent: Option<SendIntent>,
+    command: bool,
+) -> Option<SendIntent> {
+    let alternate = intent.is_some();
+    let intent = intent.or_else(|| mode.activity.send_intent());
+    let (icon, tip) = match (command, intent) {
+        (true, _) => (look.icons.send, "Run command"),
+        (false, Some(SendIntent::Steer)) => (look.icons.steer, "Steer (send now)"),
+        (false, Some(SendIntent::Queue)) => (look.icons.queue, "Queue for after this turn"),
+        (false, _) => (look.icons.send, "Send"),
     };
-    let enabled = intent.is_some() && mode.send_blocked.is_none() && has_content;
+    let tip = if alternate {
+        format!("{tip} \u{b7} Alt+Enter")
+    } else {
+        tip.to_owned()
+    };
+    let enabled = has_content && (command || (intent.is_some() && mode.send_blocked.is_none()));
+    let tint = if alternate {
+        look.p.text_dim
+    } else {
+        look.p.accent
+    };
     let response = IconButton::new(icon, look.icon_box)
-        .tip(tip)
-        .tint(look.p.accent)
+        .tip(&tip)
+        .tint(tint)
         .enabled(enabled)
         .show(ui);
     let response = match &mode.send_blocked {
-        Some(reason) => response.on_disabled_hover_text(reason.as_ref()),
-        None => response,
+        Some(reason) if !command => response.on_disabled_hover_text(reason.as_ref()),
+        _ => response,
     };
-    response.clicked()
+    response
+        .clicked()
+        .then_some(intent.unwrap_or(SendIntent::Start))
 }

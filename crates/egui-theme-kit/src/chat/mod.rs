@@ -22,25 +22,26 @@ pub use composer::{
 };
 pub use icons::ChatIcons;
 pub use mention::{
-    MentionCandidate, MentionRef, MentionSource, WireSegment, clean_label, encode, segments,
+    MentionCandidate, MentionRef, MentionSource, Resolution, WireSegment, clean_label, encode,
+    segments,
 };
 pub use palette::{ChatPalette, JsonColors, PaletteBuilder, ShellColors, legible};
 pub use session_bar::{
-    AppBarAction, BarButton, BarLayout, ChatAppBar, ChipKind, MenuEntry, NewSession,
-    NewSessionButton, OptionChip, RowKind, SessionBar, SessionBarAction, SessionItem, SessionList,
-    SessionListAction, SessionRow, SessionSection, ViewItem, ViewMenu,
+    AppBarAction, BarButton, BarLayout, ChatAppBar, ChipKind, MenuEntry, MenuEntryState,
+    NewSession, NewSessionButton, OptionChip, RowKind, RowMenuState, SessionBar, SessionBarAction,
+    SessionItem, SessionList, SessionListAction, SessionRow, SessionSection, ViewItem, ViewMenu,
 };
 pub use surface::{
     ChatSurface, FlatSurface, KitGlassSurface, SurfaceKind, paint_surface, set_surface, surface,
     surface_frame,
 };
 pub use transcript::{
-    AgentMessage, ApprovalCard, AttachmentChip, BoardAction, BoardGroup, CONFIRM_NO, CONFIRM_YES,
-    CardChoice, CardState, ChatEntry, Delivery, DetailLevel, EntryKind, Jump, LoadState, Notice,
-    Payload, PlanCard, PlanStatus, PlanStep, Question, QuestionCard, QuestionForm, QuestionItem,
-    Run, Transcript, TranscriptOptions, TranscriptResponse, TranscriptSource, TranscriptState,
-    UserMessage, WaitingBoard, WorkItem, WorkKind, WorkStats, WorkStatus, floating_cards,
-    is_command_key, plan_progress, runs, work_summary,
+    AgentLines, AgentMessage, ApprovalCard, AttachmentChip, BoardAction, BoardGroup, CONFIRM_NO,
+    CONFIRM_YES, CardChoice, CardState, ChatEntry, ChatText, Delivery, DetailLevel, EntryKind,
+    Jump, LoadState, Notice, Payload, PlanCard, PlanStatus, PlanStep, Question, QuestionCard,
+    QuestionForm, QuestionItem, Run, Transcript, TranscriptOptions, TranscriptResponse,
+    TranscriptSource, TranscriptState, UserMessage, WaitingBoard, WorkItem, WorkKind, WorkStats,
+    WorkStatus, floating_cards, is_command_key, plan_progress, runs, work_summary,
 };
 #[cfg(feature = "chat-json")]
 pub use transcript::{

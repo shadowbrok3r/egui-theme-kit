@@ -1,7 +1,8 @@
 //! Approval, question and plan cards, inline in a transcript or floating over it.
 
 use egui::{
-    AsIdSalt, CornerRadius, CursorIcon, Id, Margin, Rect, ScrollArea, Sense, Shape, Ui, Vec2, vec2,
+    AsIdSalt, CornerRadius, CursorIcon, Id, InnerResponse, Key, KeyboardShortcut, Margin,
+    Modifiers, Rect, ScrollArea, Sense, Shape, Ui, Vec2, vec2,
 };
 
 use super::entry::{ChatEntry, Payload};
@@ -43,8 +44,40 @@ pub struct ApprovalCard<'a> {
 pub struct CardChoice<'a> {
     pub label: CowStr<'a>,
     pub kind: ButtonKind,
-    /// Key hint drawn as keycaps.
+    /// Keys written as `Y` or `Ctrl+Enter`, drawn as keycaps; pressing them chooses while the pointer is over the card and no text field has focus.
     pub shortcut: Option<CowStr<'a>>,
+}
+
+/// The shortcut written as `Y` or `Ctrl+Enter`; `None` when a part is unknown.
+fn parse_shortcut(text: &str) -> Option<KeyboardShortcut> {
+    let mut modifiers = Modifiers::NONE;
+    let mut key = None;
+    for part in text.split('+').map(str::trim) {
+        match part.to_ascii_lowercase().as_str() {
+            "ctrl" | "cmd" | "command" => modifiers |= Modifiers::COMMAND,
+            "shift" => modifiers |= Modifiers::SHIFT,
+            "alt" | "option" => modifiers |= Modifiers::ALT,
+            _ if key.is_none() => {
+                key = Key::from_name(part).or_else(|| Key::from_name(&part.to_ascii_uppercase()));
+                key?;
+            }
+            _ => return None,
+        }
+    }
+    Some(KeyboardShortcut::new(modifiers, key?))
+}
+
+/// The choice whose shortcut was pressed while the pointer is over `rect` and no text field has focus.
+fn pressed_choice(ui: &Ui, rect: Rect, choices: &[CardChoice<'_>]) -> Option<usize> {
+    if ui.ctx().egui_wants_keyboard_input() || !ui.rect_contains_pointer(rect) {
+        return None;
+    }
+    choices.iter().position(|c| {
+        c.shortcut
+            .as_deref()
+            .and_then(parse_shortcut)
+            .is_some_and(|s| ui.input_mut(|i| i.consume_shortcut(&s)))
+    })
 }
 
 /// Where a card stands.
@@ -273,13 +306,14 @@ struct CardDraft {
     drafts: Vec<Draft>,
 }
 
-fn draft_id(key: &str) -> Id {
-    Id::unique(("egui_theme_kit.chat.card_draft", key))
+/// Id of the drafts of the card keyed `key` drawn in `view`.
+fn draft_id(view: Id, key: &str) -> Id {
+    view.with(("egui_theme_kit.chat.card_draft", key))
 }
 
-fn load_drafts(ui: &Ui, card: &QuestionCard<'_>) -> CardDraft {
+fn load_drafts(ui: &Ui, view: Id, card: &QuestionCard<'_>) -> CardDraft {
     let ids: Vec<String> = card.questions.iter().map(|q| q.id.to_string()).collect();
-    ui.data(|d| d.get_temp::<CardDraft>(draft_id(&card.key)))
+    ui.data(|d| d.get_temp::<CardDraft>(draft_id(view, &card.key)))
         .filter(|d| d.ids == ids)
         .unwrap_or_else(|| CardDraft {
             drafts: card.questions.iter().map(Draft::new).collect(),
@@ -303,15 +337,15 @@ fn frame<R>(
     salt: impl AsIdSalt,
     head: Head<'_>,
     add: impl FnOnce(&mut Ui, &mut RowCx<'_>) -> R,
-) -> R {
+) -> InnerResponse<R> {
     let margin = Margin::symmetric(rc.m.pad.x as i8, (rc.m.gap.y + 2.0) as i8);
-    surface_frame(ui, salt, SurfaceKind::Card, margin, |ui| {
+    let shown = surface_frame(ui, salt, SurfaceKind::Card, margin, |ui| {
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = rc.m.gap.y / 2.0;
         header(ui, rc, &head);
         add(ui, rc)
-    })
-    .inner
+    });
+    InnerResponse::new(shown.inner, shown.response)
 }
 
 /// The first line of a card: an icon, the card kind and its context.
@@ -387,7 +421,7 @@ pub(crate) fn approval(
     let key = card.key.as_ref();
     let mut action = None;
     let icon = rc.icons.approval;
-    frame(
+    let shown = frame(
         ui,
         rc,
         ("approval", key),
@@ -433,6 +467,12 @@ pub(crate) fn approval(
             }
         },
     );
+    if action.is_none()
+        && card.state.actionable()
+        && let Some(n) = pressed_choice(ui, shown.response.rect, &card.choices)
+    {
+        action = Some(CardAction::Choose(n));
+    }
     action
 }
 
@@ -444,11 +484,11 @@ pub(crate) fn question(
     view: Id,
 ) -> Option<CardAction> {
     let key = card.key.as_ref();
-    let mut drafts = load_drafts(ui, card);
+    let mut drafts = load_drafts(ui, view, card);
     let before = drafts.drafts.clone();
     let mut action = None;
     let icon = rc.icons.question;
-    frame(
+    let _ = frame(
         ui,
         rc,
         ("question", key),
@@ -529,8 +569,9 @@ pub(crate) fn question(
             });
         },
     );
-    if drafts.drafts != before || !ui.data(|d| d.get_temp::<CardDraft>(draft_id(key)).is_some()) {
-        ui.data_mut(|d| d.insert_temp(draft_id(key), drafts));
+    let id = draft_id(view, key);
+    if drafts.drafts != before || !ui.data(|d| d.get_temp::<CardDraft>(id).is_some()) {
+        ui.data_mut(|d| d.insert_temp(id, drafts));
     }
     action
 }
@@ -697,7 +738,7 @@ pub(crate) fn plan(ui: &mut Ui, rc: &mut RowCx<'_>, card: &PlanCard<'_>, view: I
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
     let title = card.title.as_deref().unwrap_or("Plan");
     let progress = plan_progress(card);
-    frame(
+    let _ = frame(
         ui,
         rc,
         ("plan", key),
@@ -951,6 +992,105 @@ mod tests {
             d.answer(&confirm).map(|a| a.picked),
             Some(vec![CONFIRM_NO.to_owned()])
         );
+    }
+
+    #[test]
+    fn shortcuts_parse_with_modifiers() {
+        assert_eq!(
+            parse_shortcut("Y"),
+            Some(KeyboardShortcut::new(Modifiers::NONE, Key::Y))
+        );
+        assert_eq!(
+            parse_shortcut("n"),
+            Some(KeyboardShortcut::new(Modifiers::NONE, Key::N))
+        );
+        assert_eq!(
+            parse_shortcut("Ctrl+Enter"),
+            Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter))
+        );
+        assert_eq!(parse_shortcut("Y+N"), None);
+        assert_eq!(parse_shortcut("Hyper"), None);
+    }
+
+    #[test]
+    fn a_shortcut_chooses_only_on_the_card_under_the_pointer() {
+        let choices = [
+            CardChoice {
+                label: Cow::Borrowed("Approve"),
+                kind: ButtonKind::Primary,
+                shortcut: Some(Cow::Borrowed("Y")),
+            },
+            CardChoice {
+                label: Cow::Borrowed("Deny"),
+                kind: ButtonKind::Danger,
+                shortcut: Some(Cow::Borrowed("N")),
+            },
+        ];
+        let card = ApprovalCard {
+            key: Cow::Borrowed("ap"),
+            context: Cow::Borrowed("desk"),
+            title: Cow::Borrowed("Run a command"),
+            command: None,
+            detail: None,
+            reason: None,
+            choices: CowList::Borrowed(&choices),
+            state: CardState::Open,
+        };
+        let ctx = egui::Context::default();
+        let rect = std::cell::Cell::new(Rect::NOTHING);
+        let run = |events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut action = None;
+            let mut out = ctx.run_ui(raw, |ui| {
+                let mut rc = RowCx::new(ui, Id::unique("cards"));
+                let inner = ui.scope(|ui| approval(ui, &mut rc, &card, Id::unique("view")));
+                rect.set(inner.response.rect);
+                action = inner.inner;
+            });
+            out.textures_delta.clear();
+            action
+        };
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        run(Vec::new());
+        assert_eq!(run(vec![key(Key::N)]), None);
+        let inside = rect.get().center();
+        run(vec![egui::Event::PointerMoved(inside)]);
+        assert_eq!(run(vec![key(Key::N)]), Some(CardAction::Choose(1)));
+    }
+
+    #[test]
+    fn drafts_are_kept_per_view() {
+        let q = question(
+            QuestionForm::Choice,
+            vec![item("x", false), item("y", false)],
+        );
+        let card = QuestionCard {
+            key: Cow::Borrowed("0"),
+            context: Cow::Borrowed(""),
+            header: None,
+            why: None,
+            questions: CowList::Owned(vec![q.clone()]),
+            state: CardState::Open,
+        };
+        let ctx = egui::Context::default();
+        let (a, b) = (Id::unique("session-a"), Id::unique("session-b"));
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let mut drafts = load_drafts(ui, a, &card);
+            drafts.drafts[0].pick("x", true);
+            ui.data_mut(|d| d.insert_temp(draft_id(a, "0"), drafts));
+            assert_eq!(load_drafts(ui, a, &card).drafts[0].picked, vec!["x"]);
+            assert!(load_drafts(ui, b, &card).drafts[0].picked.is_empty());
+        });
+        out.textures_delta.clear();
     }
 
     #[test]

@@ -6,7 +6,7 @@ use egui::{
 };
 
 use super::*;
-use crate::chat::mention::{MentionCandidate, MentionRef, encode};
+use crate::chat::mention::{MentionCandidate, MentionRef, Resolution, encode};
 
 const SALT: &str = "test-composer";
 
@@ -55,7 +55,7 @@ fn candidates(_: &str, _: usize) -> Vec<MentionCandidate> {
 }
 
 fn commands(_: &str) -> Vec<SlashCommand<'static>> {
-    vec![SlashCommand {
+    let compact = SlashCommand {
         id: "compact".into(),
         name: "/compact".into(),
         args: "".into(),
@@ -64,7 +64,37 @@ fn commands(_: &str) -> Vec<SlashCommand<'static>> {
         icon: None,
         enabled: true,
         run_on_pick: false,
-    }]
+    };
+    vec![
+        compact.clone(),
+        SlashCommand {
+            id: "permissions".into(),
+            name: "/permissions".into(),
+            args: "<mode>".into(),
+            enabled: false,
+            ..compact
+        },
+    ]
+}
+
+/// Painted text sections whose background is the mention fill.
+fn chip_sections(ctx: &Context, out: &FullOutput) -> usize {
+    let fill = ChatPalette::get(ctx).mention_fill;
+    out.shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t),
+            _ => None,
+        })
+        .map(|t| {
+            t.galley
+                .job
+                .sections
+                .iter()
+                .filter(|s| s.format.background == fill)
+                .count()
+        })
+        .sum()
 }
 
 /// A composer harness with fixed sources and options.
@@ -74,6 +104,8 @@ struct Harness {
     width: f32,
     enter: EnterBehavior,
     editable: bool,
+    activity: Activity,
+    blocked: Option<&'static str>,
     raw: Option<RawInput>,
 }
 
@@ -85,6 +117,8 @@ impl Harness {
             width: 800.0,
             enter: EnterBehavior::Send,
             editable: true,
+            activity: Activity::Idle,
+            blocked: None,
             raw: None,
         };
         h.frame(Vec::new());
@@ -99,7 +133,8 @@ impl Harness {
         raw.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(self.width, 600.0)));
         raw.events = events;
         let mut response = None;
-        let (enter, editable) = (self.enter, self.editable);
+        let (enter, editable, activity, blocked) =
+            (self.enter, self.editable, self.activity, self.blocked);
         let state = &mut self.state;
         let mentions = candidates;
         let slash = commands;
@@ -111,7 +146,8 @@ impl Harness {
                     .slash(&slash)
                     .mode(ComposerMode {
                         editable,
-                        ..ComposerMode::default()
+                        activity,
+                        send_blocked: blocked.map(Into::into),
                     })
                     .show(ui, state),
             );
@@ -349,8 +385,8 @@ fn renamed_targets_relabel_and_unknown_ones_are_marked() {
         fn suggest(&self, _: &str, _: usize) -> Vec<MentionCandidate> {
             Vec::new()
         }
-        fn resolve(&self, t: &MentionRef) -> Option<String> {
-            (t.id == "1").then(|| "Renamed".to_owned())
+        fn resolve(&self, t: &MentionRef) -> Resolution {
+            Resolution::found((t.id == "1").then(|| "Renamed".to_owned()))
         }
     }
     let ctx = Context::default();
@@ -424,4 +460,151 @@ impl TextStyleRow {
         let font = egui::TextStyle::Body.resolve(&ctx.global_style());
         ctx.fonts_mut(|f| f.row_height(&font))
     }
+}
+
+#[test]
+fn a_pick_in_the_same_frame_as_typing_uses_the_new_query() {
+    let mut h = Harness::new();
+    h.frame(vec![text("@F")]);
+    h.frame(Vec::new());
+    assert!(h.state.popup.is_some());
+    let r = h.frame(vec![text("ix"), key(Key::Enter, Modifiers::NONE)]);
+    assert!(r.accepted_suggestion);
+    h.frame(Vec::new());
+    assert_eq!(h.state.text(), "@Fix scroll ");
+    assert_eq!(h.state.spans()[0].chars, 0..11);
+}
+
+#[test]
+fn modified_tabs_never_reach_the_text_while_the_popup_is_open() {
+    let mut h = Harness::new();
+    h.frame(vec![text("    @F")]);
+    h.frame(Vec::new());
+    assert!(h.state.popup.is_some());
+    h.frame(vec![key(Key::Tab, Modifiers::SHIFT)]);
+    assert_eq!(h.state.text(), "    @F");
+    h.frame(vec![key(Key::Tab, Modifiers::CTRL)]);
+    assert_eq!(h.state.text(), "    @F");
+    assert!(h.state.popup.is_some());
+}
+
+#[test]
+fn typed_and_picked_commands_run_alike_while_sending_is_blocked() {
+    let mut h = Harness::new();
+    h.blocked = Some("Reconnecting");
+    h.frame(vec![text("/compact now")]);
+    let action = h.act(vec![key(Key::Enter, Modifiers::NONE)]);
+    assert_eq!(
+        action,
+        Some(ComposerAction::Command {
+            id: "compact".into(),
+            args: "now".into(),
+        })
+    );
+    h.frame(vec![text("/comp")]);
+    h.frame(Vec::new());
+    let action = h.act(vec![key(Key::Enter, Modifiers::NONE)]);
+    assert!(
+        matches!(action, Some(ComposerAction::Command { .. })),
+        "{action:?}"
+    );
+    h.frame(vec![text("hello")]);
+    assert_eq!(h.act(vec![key(Key::Enter, Modifiers::NONE)]), None);
+    assert_eq!(h.state.text(), "hello");
+}
+
+#[test]
+fn a_disabled_command_is_neither_run_nor_sent() {
+    let mut h = Harness::new();
+    h.frame(vec![text("/permissions full")]);
+    assert_eq!(h.act(vec![key(Key::Enter, Modifiers::NONE)]), None);
+    assert_eq!(h.state.text(), "/permissions full");
+}
+
+#[test]
+fn alt_enter_sends_with_the_other_busy_intent() {
+    let mut h = Harness::new();
+    h.activity = Activity::Busy {
+        enter: SendIntent::Steer,
+        can_steer: true,
+        can_queue: true,
+    };
+    h.frame(vec![text("later")]);
+    let action = h.act(vec![key(Key::Enter, Modifiers::ALT)]);
+    let Some(ComposerAction::Send { intent, .. }) = action else {
+        panic!("send expected, got {action:?}");
+    };
+    assert_eq!(intent, SendIntent::Queue);
+    h.frame(vec![text("now")]);
+    let action = h.act(vec![key(Key::Enter, Modifiers::NONE)]);
+    assert!(
+        matches!(
+            action,
+            Some(ComposerAction::Send {
+                intent: SendIntent::Steer,
+                ..
+            })
+        ),
+        "{action:?}"
+    );
+    assert_eq!(h.activity.alternate_intent(), Some(SendIntent::Queue));
+    let steer_only = Activity::Busy {
+        enter: SendIntent::Steer,
+        can_steer: true,
+        can_queue: false,
+    };
+    assert_eq!(steer_only.alternate_intent(), None);
+    assert_eq!(Activity::Idle.alternate_intent(), None);
+}
+
+#[test]
+fn chips_after_the_cursor_keep_their_style_on_the_typing_frame() {
+    let mut h = Harness::new();
+    h.state
+        .insert_mention(MentionRef::new("session", "desk/1", "Fix scroll"));
+    h.frame(Vec::new());
+    let (_, idle) = h.frame_full(Vec::new());
+    assert_eq!(chip_sections(&h.ctx, &idle), 1);
+    h.frame(vec![key(Key::Home, Modifiers::NONE)]);
+    let (_, typing) = h.frame_full(vec![text("x")]);
+    assert_eq!(h.state.text(), "x@Fix scroll ");
+    assert_eq!(chip_sections(&h.ctx, &typing), 1);
+}
+
+#[test]
+fn app_inserted_and_restored_chips_stay_live_with_a_suggest_only_source() {
+    let ctx = Context::default();
+    let mut state = ComposerState::default();
+    let source = candidates;
+    state.set_wire(&encode(&MentionRef::new("session", "x", "Restored")));
+    state.insert_mention(MentionRef::new("session", "y", "Inserted"));
+    let unresolved = resolve_labels(&ctx, Composer::text_id(SALT), &mut state, Some(&source), 0);
+    assert_eq!(unresolved, vec![false, false]);
+    assert!(state.was_picked(&MentionRef::new("session", "y", "Inserted")));
+}
+
+#[test]
+fn files_without_a_pointer_go_to_one_composer() {
+    let ctx = Context::default();
+    let (mut a, mut b) = (ComposerState::default(), ComposerState::default());
+    let mut frame = |focus: Option<&str>| {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+            hovered_files: vec![HoveredFile::default()],
+            ..RawInput::default()
+        };
+        if let Some(salt) = focus {
+            ctx.memory_mut(|m| m.request_focus(Composer::text_id(salt)));
+        }
+        let mut hover = (false, false);
+        let mut out = ctx.run_ui(raw, |ui| {
+            hover.0 = Composer::new("drop-a").show(ui, &mut a).file_hover;
+            hover.1 = Composer::new("drop-b").show(ui, &mut b).file_hover;
+        });
+        out.textures_delta.clear();
+        hover
+    };
+    assert_eq!(frame(None), (true, false));
+    frame(Some("drop-b"));
+    assert_eq!(frame(None), (false, true));
 }

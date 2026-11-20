@@ -12,6 +12,7 @@ mod payload;
 mod rich;
 mod row;
 mod shell;
+mod views;
 mod work;
 
 use std::collections::HashMap;
@@ -37,6 +38,7 @@ pub use json::{
     PayloadRole, PayloadTree, PayloadTreeResponse, TreeBudget, count_nodes, json_visuals,
 };
 pub use shell::is_command_key;
+pub use views::ChatText;
 
 use super::mention::MentionSource;
 use super::types::{ChatAction, CowStr, MessageNav, TimeFormat, UnixMs};
@@ -50,6 +52,15 @@ const FLING_SPEED: f32 = 40.0;
 const OVERSCAN: f32 = 0.5;
 /// Share of the viewport height above which a user message counts as current.
 const NAV_LINE: f32 = 0.33;
+
+/// Draws app-defined lines of agent messages, such as media tags, in place of their text.
+pub trait AgentLines {
+    /// Whether the app draws `line`; lines inside code fences are never offered.
+    fn claims(&self, line: &str) -> bool;
+
+    /// Draws a claimed `line` of the agent message keyed `key`.
+    fn show(&self, ui: &mut Ui, key: &str, line: &str);
+}
 
 /// Entries the transcript reads by index, so the app builds only the rows in view.
 pub trait TranscriptSource {
@@ -142,6 +153,8 @@ pub struct TranscriptOptions {
     pub max_width: Option<f32>,
     /// Current time, for running durations and today's labels.
     pub now: Option<UnixMs>,
+    /// Shows the author under every user bubble, not only on hover.
+    pub show_user_author: bool,
 }
 
 impl Default for TranscriptOptions {
@@ -151,6 +164,7 @@ impl Default for TranscriptOptions {
             show_thinking: true,
             max_width: None,
             now: None,
+            show_user_author: false,
         }
     }
 }
@@ -270,6 +284,7 @@ pub struct Transcript<'a> {
     mention_stamp: Option<u64>,
     time_format: Option<&'a dyn TimeFormat>,
     older: Option<LoadState>,
+    agent_lines: Option<&'a dyn AgentLines>,
 }
 
 fn key_hash(key: &str) -> u64 {
@@ -331,8 +346,31 @@ struct Row {
     run: Run,
     kind: EntryKind,
     hash: u64,
+    /// Key hashes of the entries after the first in a work group.
+    members: Vec<u64>,
     sig: u64,
     h: f32,
+}
+
+/// The row keyed `hash`, else the work group holding an entry keyed `hash`.
+fn find_row(rows: &[Row], hash: u64) -> Option<usize> {
+    rows.iter()
+        .position(|r| r.hash == hash)
+        .or_else(|| rows.iter().position(|r| r.members.contains(&hash)))
+}
+
+/// The open choice stored under the first key of the group over `range` that has one.
+fn group_choice<S: TranscriptSource + ?Sized>(
+    state: &TranscriptState,
+    src: &S,
+    range: std::ops::Range<usize>,
+) -> Option<bool> {
+    if state.group_open.is_empty() {
+        return None;
+    }
+    range
+        .into_iter()
+        .find_map(|i| state.group_open.get(src.key(i).as_ref()).copied())
 }
 
 impl<'a> Transcript<'a> {
@@ -344,7 +382,14 @@ impl<'a> Transcript<'a> {
             mention_stamp: None,
             time_format: None,
             older: None,
+            agent_lines: None,
         }
+    }
+
+    /// Lets the app draw lines of agent messages it claims, such as media tags.
+    pub fn agent_lines(mut self, lines: &'a dyn AgentLines) -> Self {
+        self.agent_lines = Some(lines);
+        self
     }
 
     pub fn options(mut self, options: TranscriptOptions) -> Self {
@@ -391,6 +436,7 @@ impl<'a> Transcript<'a> {
         rc.options = self.options;
         rc.mentions = self.mentions;
         rc.mention_stamp = self.mention_stamp;
+        rc.agent_lines = self.agent_lines;
         if let Some(format) = self.time_format {
             rc.time_format = format;
         }
@@ -421,9 +467,17 @@ impl<'a> Transcript<'a> {
             .map(|run| {
                 let kind = kinds[first(&run)];
                 let key = src.key(first(&run));
-                let chosen = matches!(run, Run::Work(_))
-                    .then(|| state.group_open.get(key.as_ref()).copied())
-                    .flatten();
+                let (chosen, members) = match &run {
+                    Run::Work(range) => (
+                        group_choice(state, src, range.clone()),
+                        range
+                            .clone()
+                            .skip(1)
+                            .map(|i| key_hash(&src.key(i)))
+                            .collect(),
+                    ),
+                    Run::Single(_) => (None, Vec::new()),
+                };
                 let sig = hash_of((
                     run_revision(src, &run),
                     width.round() as i32,
@@ -441,6 +495,7 @@ impl<'a> Transcript<'a> {
                     run,
                     kind,
                     hash,
+                    members,
                     sig,
                     h,
                 }
@@ -481,11 +536,9 @@ impl<'a> Transcript<'a> {
         let desired = if state.following {
             Some((content_h - view_h).max(0.0))
         } else {
-            state.anchor.and_then(|(hash, off)| {
-                rows.iter()
-                    .position(|r| r.hash == hash)
-                    .map(|i| row_tops[i] + off)
-            })
+            state
+                .anchor
+                .and_then(|(hash, off)| find_row(&rows, hash).map(|i| row_tops[i] + off))
         };
         let mut area = ScrollArea::vertical()
             .id_salt(id.with("scroll"))
@@ -535,6 +588,8 @@ impl<'a> Transcript<'a> {
                 |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let origin = ui.cursor().top();
+                    let column = ui.max_rect().x_range();
+                    let row_rect = |top: f32| Rect::from_x_y_ranges(column, top..=f32::INFINITY);
                     if let Some(load) = older {
                         if lo < header_h {
                             ui.allocate_ui_with_layout(
@@ -552,7 +607,7 @@ impl<'a> Transcript<'a> {
                     let pivot = state
                         .anchor
                         .filter(|_| !state.following)
-                        .and_then(|(hash, _)| rows.iter().position(|r| r.hash == hash))
+                        .and_then(|(hash, _)| find_row(&rows, hash))
                         .filter(|p| (first_row..last_row).contains(p))
                         .unwrap_or(first_row);
                     let mut pass = RowPass {
@@ -567,14 +622,10 @@ impl<'a> Transcript<'a> {
                     for r in first_row..pivot {
                         let row = &rows[r];
                         let slot = ui.painter().add(Shape::Noop);
-                        let rect = Rect::from_min_size(
-                            egui::pos2(ui.max_rect().left(), origin + row_tops[r]),
-                            vec2(ui.max_rect().width(), f32::INFINITY),
-                        );
                         let mut child = ui.new_child(
                             UiBuilder::new()
                                 .id_salt(("row", row.hash))
-                                .max_rect(rect)
+                                .max_rect(row_rect(origin + row_tops[r]))
                                 .layout(Layout::top_down(Align::Min)),
                         );
                         pass.contents(&mut child, &rows, r);
@@ -593,11 +644,16 @@ impl<'a> Transcript<'a> {
                         let row = &rows[r];
                         let top = ui.cursor().top();
                         let slot = ui.painter().add(Shape::Noop);
-                        ui.scope_builder(UiBuilder::new().id_salt(("row", row.hash)), |ui| {
-                            pass.contents(ui, &rows, r);
-                        });
-                        let h = ui.cursor().top() - top;
-                        let drawn = Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=top + h);
+                        let mut child = ui.new_child(
+                            UiBuilder::new()
+                                .id_salt(("row", row.hash))
+                                .max_rect(row_rect(top))
+                                .layout(Layout::top_down(Align::Min)),
+                        );
+                        pass.contents(&mut child, &rows, r);
+                        let h = child.min_rect().height();
+                        ui.add_space(h);
+                        let drawn = Rect::from_x_y_ranges(column, top..=top + h);
                         pass.flash_row(ui, slot, row.hash, drawn);
                         measured.push((r, h));
                     }
@@ -637,11 +693,9 @@ impl<'a> Transcript<'a> {
             state.following = true;
         }
 
-        let anchored = state.anchor.and_then(|(hash, off)| {
-            rows.iter()
-                .position(|r| r.hash == hash)
-                .map(|i| (i, off + user_delta))
-        });
+        let anchored = state
+            .anchor
+            .and_then(|(hash, off)| find_row(&rows, hash).map(|i| (i, off + user_delta)));
         state.anchor = match anchored {
             Some((i, off)) if (0.0..rows[i].h).contains(&off) => Some((rows[i].hash, off)),
             Some((i, off)) => row_at(&rows, &row_tops, row_tops[i] + off),
@@ -855,7 +909,7 @@ fn draw_row<S: TranscriptSource + ?Sized>(
                 })
                 .collect();
             let key = src.key(range.start).into_owned();
-            let chosen = state.group_open.get(&key).copied();
+            let chosen = group_choice(state, src, range.clone());
             if let Some(open) = work::group(ui, rc, &key, &items, chosen) {
                 state.group_open.insert(key, open);
             }

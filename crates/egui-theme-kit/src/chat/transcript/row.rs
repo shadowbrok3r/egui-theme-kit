@@ -6,7 +6,7 @@ use egui::{FontFamily, FontId, Id, Response, TextStyle, Ui};
 
 use super::TranscriptOptions;
 use crate::chat::icons::ChatIcons;
-use crate::chat::mention::{MentionRef, MentionSource};
+use crate::chat::mention::{MentionRef, MentionSource, Resolution};
 use crate::chat::palette::ChatPalette;
 use crate::chat::types::{ChatAction, ClockFormat, TimeFormat, UnixMs};
 use crate::controls::{Metrics, Tokens};
@@ -59,7 +59,7 @@ pub(crate) fn spinner_at(ui: &mut Ui, rect: egui::Rect, color: egui::Color32) {
 #[derive(Clone, Default)]
 struct ResolveCache {
     stamp: u64,
-    labels: HashMap<String, Option<String>>,
+    labels: HashMap<String, Resolution>,
 }
 
 /// How a mention chip is drawn.
@@ -90,6 +90,7 @@ pub(crate) struct RowCx<'a> {
     pub mentions: Option<&'a dyn MentionSource>,
     /// Stamp of the mention labels; `None` resolves again every pass.
     pub mention_stamp: Option<u64>,
+    pub agent_lines: Option<&'a dyn super::AgentLines>,
     pub actions: Vec<ChatAction>,
 }
 
@@ -110,6 +111,7 @@ impl<'a> RowCx<'a> {
             time_format: &DEFAULT_CLOCK,
             mentions: None,
             mention_stamp: None,
+            agent_lines: None,
             actions: Vec::new(),
         }
     }
@@ -145,16 +147,26 @@ impl<'a> RowCx<'a> {
                 clickable: user,
             };
         };
-        let resolved = self.resolve(ui, source, m);
-        let known = resolved.is_some();
-        MentionView {
-            label: resolved.unwrap_or_else(|| m.label.clone()),
-            known,
-            clickable: known,
+        match self.resolve(ui, source, m) {
+            Resolution::Label(label) => MentionView {
+                label,
+                known: true,
+                clickable: true,
+            },
+            Resolution::Missing => MentionView {
+                label: m.label.clone(),
+                known: false,
+                clickable: false,
+            },
+            Resolution::Unknown => MentionView {
+                label: m.label.clone(),
+                known: true,
+                clickable: user,
+            },
         }
     }
 
-    fn resolve(&self, ui: &Ui, source: &dyn MentionSource, m: &MentionRef) -> Option<String> {
+    fn resolve(&self, ui: &Ui, source: &dyn MentionSource, m: &MentionRef) -> Resolution {
         let cache_id = self.id.with("egui_theme_kit.chat.mention_labels");
         let stamp = self
             .mention_stamp
@@ -196,9 +208,9 @@ mod tests {
             Vec::new()
         }
 
-        fn resolve(&self, target: &MentionRef) -> Option<String> {
+        fn resolve(&self, target: &MentionRef) -> Resolution {
             self.calls.set(self.calls.get() + 1);
-            (target.id == "1").then(|| "Renamed".to_owned())
+            Resolution::found((target.id == "1").then(|| "Renamed".to_owned()))
         }
     }
 
@@ -224,6 +236,22 @@ mod tests {
             out.textures_delta.clear();
         }
         assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn a_source_that_does_not_resolve_draws_chips_as_without_one() {
+        let ctx = egui::Context::default();
+        let suggest_only = |_: &str, _: usize| Vec::<MentionCandidate>::new();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let mut rc = RowCx::new(ui, Id::unique("mention-test-3"));
+            rc.mentions = Some(&suggest_only);
+            let m = MentionRef::new("session", "1", "A");
+            let user = rc.mention(ui, &m, true);
+            assert!(user.known && user.clickable);
+            assert_eq!(user.label, "A");
+            assert!(!rc.mention(ui, &m, false).clickable);
+        });
+        out.textures_delta.clear();
     }
 
     #[test]
