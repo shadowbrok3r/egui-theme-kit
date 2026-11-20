@@ -76,6 +76,7 @@ eframe = { workspace = true, features = ["x11", "wayland", "default_fonts", "glo
 egui_extras = { workspace = true, features = ["svg"] }
 egui-phosphor = { git = "https://github.com/shadowbrok3r/egui-phosphor", branch = "egui-037", default-features = false, features = ["regular"] }
 regex = "1"
+png = "0.18"
 
 [[example]]
 name = "picker"
@@ -100,3 +101,12 @@ required-features = ["eframe"]
 [[example]]
 name = "late_store"
 required-features = ["eframe"]
+
+[[example]]
+name = "chat_demo"
+path = "examples/chat_demo/main.rs"
+required-features = ["eframe", "chat", "chat-json"]
+
+[[test]]
+name = "chat_preview"
+required-features = ["chat", "chat-json"]
