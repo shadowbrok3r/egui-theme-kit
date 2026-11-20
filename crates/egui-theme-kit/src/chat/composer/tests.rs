@@ -1,8 +1,8 @@
 //! Headless frames through the composer: typing, sending, popups, chips, copy, drop hover and layout.
 
 use egui::{
-    Context, DroppedFile, Event, FullOutput, HoveredFile, Key, Modifiers, OutputCommand, Pos2,
-    RawInput, Rect, vec2,
+    Context, DroppedFile, Event, FullOutput, HoveredFile, Key, Modifiers, OutputCommand,
+    PointerButton, Pos2, RawInput, Rect, TouchDeviceId, TouchId, TouchPhase, ViewportId, vec2,
 };
 
 use super::*;
@@ -107,6 +107,10 @@ struct Harness {
     activity: Activity,
     blocked: Option<&'static str>,
     raw: Option<RawInput>,
+    height: f32,
+    /// Clock of the next frame; `None` lets egui advance it.
+    time: Option<f64>,
+    clipboard: Option<String>,
 }
 
 impl Harness {
@@ -120,6 +124,9 @@ impl Harness {
             activity: Activity::Idle,
             blocked: None,
             raw: None,
+            height: 600.0,
+            time: None,
+            clipboard: None,
         };
         h.frame(Vec::new());
         h.ctx
@@ -130,27 +137,38 @@ impl Harness {
 
     fn frame_full(&mut self, events: Vec<Event>) -> (ComposerResponse, FullOutput) {
         let mut raw = self.raw.take().unwrap_or_default();
-        raw.screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(self.width, 600.0)));
+        raw.screen_rect = Some(Rect::from_min_size(
+            Pos2::ZERO,
+            vec2(self.width, self.height),
+        ));
         raw.events = events;
+        if let Some(t) = self.time.as_mut() {
+            raw.time = Some(*t);
+            *t += 1.0 / 60.0;
+        }
         let mut response = None;
         let (enter, editable, activity, blocked) =
             (self.enter, self.editable, self.activity, self.blocked);
         let state = &mut self.state;
         let mentions = candidates;
         let slash = commands;
+        let clip = self.clipboard.clone();
+        let read = move || clip.clone();
+        let has_clip = self.clipboard.is_some();
         let mut out = self.ctx.run_ui(raw, |ui| {
-            response = Some(
-                Composer::new(SALT)
-                    .enter(enter)
-                    .mentions(&mentions)
-                    .slash(&slash)
-                    .mode(ComposerMode {
-                        editable,
-                        activity,
-                        send_blocked: blocked.map(Into::into),
-                    })
-                    .show(ui, state),
-            );
+            let mut composer = Composer::new(SALT)
+                .enter(enter)
+                .mentions(&mentions)
+                .slash(&slash)
+                .mode(ComposerMode {
+                    editable,
+                    activity,
+                    send_blocked: blocked.map(Into::into),
+                });
+            if has_clip {
+                composer = composer.clipboard(&read);
+            }
+            response = Some(composer.show(ui, state));
         });
         out.textures_delta.clear();
         (response.expect("composer drawn"), out)
@@ -607,4 +625,376 @@ fn files_without_a_pointer_go_to_one_composer() {
     assert_eq!(frame(None), (true, false));
     frame(Some("drop-b"));
     assert_eq!(frame(None), (false, true));
+}
+
+fn finger(phase: TouchPhase, pos: Pos2) -> Event {
+    Event::Touch {
+        device_id: TouchDeviceId(1),
+        id: TouchId(1),
+        phase,
+        pos,
+        force: None,
+    }
+}
+
+fn button(pos: Pos2, pressed: bool) -> Event {
+    Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+/// Forty numbered lines, taller than the text box.
+fn long_text() -> String {
+    (0..40)
+        .map(|n| format!("line {n:02}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl Harness {
+    /// A touch screen harness holding `text`, unfocused and without a stored cursor.
+    fn touch(text: &str) -> Self {
+        let mut h = Self {
+            ctx: Context::default(),
+            state: ComposerState::default(),
+            width: 800.0,
+            enter: EnterBehavior::Newline,
+            editable: true,
+            activity: Activity::Idle,
+            blocked: None,
+            raw: None,
+            height: 600.0,
+            time: Some(0.0),
+            clipboard: None,
+        };
+        h.state.buffer_mut().push_str(text);
+        h.frame(vec![finger(TouchPhase::Cancel, Pos2::ZERO)]);
+        h.idle(3);
+        h
+    }
+
+    fn idle(&mut self, frames: usize) -> ComposerResponse {
+        let mut last = self.frame(Vec::new());
+        for _ in 1..frames {
+            last = self.frame(Vec::new());
+        }
+        last
+    }
+
+    fn press(&mut self, pos: Pos2) {
+        self.frame(vec![
+            finger(TouchPhase::Start, pos),
+            Event::PointerMoved(pos),
+            button(pos, true),
+        ]);
+    }
+
+    fn drag_to(&mut self, pos: Pos2) {
+        self.frame(vec![
+            finger(TouchPhase::Move, pos),
+            Event::PointerMoved(pos),
+        ]);
+    }
+
+    fn release(&mut self, pos: Pos2) -> FullOutput {
+        self.frame_full(vec![
+            finger(TouchPhase::End, pos),
+            button(pos, false),
+            Event::PointerGone,
+        ])
+        .1
+    }
+
+    fn tap(&mut self, pos: Pos2) -> FullOutput {
+        self.press(pos);
+        self.release(pos)
+    }
+
+    fn cursor(&self) -> Option<(usize, usize)> {
+        cursor_of(&self.ctx, Composer::text_id(SALT))
+    }
+
+    fn focused(&self) -> bool {
+        self.ctx.memory(|m| m.has_focus(Composer::text_id(SALT)))
+    }
+
+    /// Centre of the text action button for `action`.
+    fn action(&self, action: TextAction) -> Pos2 {
+        self.state
+            .touch
+            .buttons
+            .iter()
+            .find(|(a, _)| *a == action)
+            .map(|(_, r)| r.center())
+            .expect("action row drawn")
+    }
+
+    fn cursor_in_view(&self) -> bool {
+        let t = &self.state.touch;
+        t.view.expand(2.0).contains_rect(t.cursor)
+    }
+}
+
+fn copied(out: &FullOutput) -> Vec<String> {
+    out.platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_first_tap_puts_the_cursor_at_the_end_and_later_taps_where_they_land() {
+    let text = long_text();
+    let len = text.chars().count();
+    let mut h = Harness::touch(&text);
+    assert!(h.state.touch.scroll_max > 0.0);
+    assert_eq!(h.state.touch.scroll_y, 0.0);
+    let view = h.state.touch.view;
+    h.tap(view.center());
+    h.idle(3);
+    assert!(h.focused());
+    assert_eq!(h.cursor(), Some((len, len)));
+    assert!(
+        (h.state.touch.scroll_y - h.state.touch.scroll_max).abs() < 1.0,
+        "{} of {}",
+        h.state.touch.scroll_y,
+        h.state.touch.scroll_max
+    );
+    assert!(h.cursor_in_view());
+
+    h.tap(h.state.touch.view.center());
+    h.idle(2);
+    let (a, b) = h.cursor().expect("cursor");
+    assert_eq!(a, b);
+    assert!(b < len, "{b}");
+}
+
+#[test]
+fn a_drag_on_the_focused_text_scrolls_it_and_keeps_the_cursor() {
+    let mut h = Harness::touch(&long_text());
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let before = h.cursor();
+    let top = h.state.touch.scroll_y;
+    let p = h.state.touch.view.center();
+    h.press(p);
+    for dy in [20.0, 60.0, 100.0] {
+        h.drag_to(p + vec2(0.0, dy));
+    }
+    h.release(p + vec2(0.0, 100.0));
+    h.idle(2);
+    assert_eq!(h.cursor(), before);
+    assert!(
+        (top - h.state.touch.scroll_y - 100.0).abs() < 1.0,
+        "{top} -> {}",
+        h.state.touch.scroll_y
+    );
+    assert!(h.focused());
+}
+
+#[test]
+fn a_held_press_selects_instead_of_scrolling() {
+    let mut h = Harness::touch(&long_text());
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let top = h.state.touch.scroll_y;
+    let p = h.state.touch.view.center();
+    h.press(p);
+    h.idle(25);
+    assert_eq!(h.state.touch.gesture, Gesture::Selecting);
+    h.drag_to(p - vec2(0.0, 40.0));
+    h.release(p - vec2(0.0, 40.0));
+    h.idle(2);
+    let (a, b) = h.cursor().expect("cursor");
+    assert_ne!(a, b);
+    assert!((h.state.touch.scroll_y - top).abs() < 40.0);
+}
+
+#[test]
+fn a_press_right_after_a_tap_drag_selects() {
+    let mut h = Harness::touch(&long_text());
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let top = h.state.touch.scroll_y;
+    let p = h.state.touch.view.center();
+    h.tap(p);
+    h.press(p);
+    assert_eq!(h.state.touch.gesture, Gesture::Selecting);
+    h.drag_to(p + vec2(30.0, 0.0));
+    h.release(p + vec2(30.0, 0.0));
+    h.idle(1);
+    let (a, b) = h.cursor().expect("cursor");
+    assert_ne!(a, b);
+    assert_eq!(h.state.touch.scroll_y, top);
+}
+
+#[test]
+fn drags_outside_the_text_still_reach_other_scroll_areas() {
+    let ctx = Context::default();
+    let mut state = ComposerState::default();
+    state.buffer_mut().push_str(&long_text());
+    let mut offset = 0.0;
+    let mut time = 0.0;
+    let mut frame = |events: Vec<Event>| {
+        time += 1.0 / 60.0;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+            time: Some(time),
+            events,
+            ..RawInput::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            offset = egui::ScrollArea::vertical()
+                .id_salt("above")
+                .auto_shrink(false)
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    for n in 0..60 {
+                        ui.label(format!("row {n}"));
+                    }
+                })
+                .state
+                .clamped_offset()
+                .y;
+            let _ = Composer::new(SALT).show(ui, &mut state);
+        });
+        out.textures_delta.clear();
+    };
+    frame(vec![finger(TouchPhase::Cancel, Pos2::ZERO)]);
+    ctx.memory_mut(|m| m.request_focus(Composer::text_id(SALT)));
+    frame(Vec::new());
+    let p = Pos2::new(100.0, 150.0);
+    frame(vec![
+        finger(TouchPhase::Start, p),
+        Event::PointerMoved(p),
+        button(p, true),
+    ]);
+    for dy in [20.0, 50.0, 80.0] {
+        let q = p - vec2(0.0, dy);
+        frame(vec![finger(TouchPhase::Move, q), Event::PointerMoved(q)]);
+    }
+    assert!(offset > 50.0, "{offset}");
+    assert_eq!(state.touch.gesture, Gesture::Idle);
+}
+
+#[test]
+fn the_cursor_stays_in_view_as_text_grows_and_the_box_shrinks() {
+    let mut h = Harness::touch("start");
+    h.tap(h.state.touch.view.center());
+    h.idle(2);
+    for n in 0..30 {
+        h.frame(vec![text(&format!("\nrow {n}"))]);
+        h.idle(1);
+        assert!(h.cursor_in_view(), "row {n}");
+    }
+    assert!(h.state.touch.scroll_max > 0.0);
+
+    let p = h.state.touch.view.center();
+    h.press(p);
+    for dy in [30.0, 80.0, 150.0] {
+        h.drag_to(p + vec2(0.0, dy));
+    }
+    h.release(p + vec2(0.0, 150.0));
+    h.idle(1);
+    assert!(!h.cursor_in_view());
+
+    h.height = 360.0;
+    h.idle(3);
+    assert!(h.cursor_in_view());
+    h.height = 600.0;
+    h.idle(3);
+    assert!(h.cursor_in_view());
+}
+
+#[test]
+fn touch_shows_the_action_row_while_focused() {
+    let mut h = Harness::touch("hello");
+    assert!(!h.frame(Vec::new()).provides_text_actions);
+    h.tap(h.state.touch.view.center());
+    let r = h.idle(2);
+    assert!(r.provides_text_actions);
+    assert_eq!(h.state.touch.buttons.len(), 4);
+    let view = h.state.touch.view;
+    assert!(
+        h.state
+            .touch
+            .buttons
+            .iter()
+            .all(|(_, b)| !b.intersects(view))
+    );
+
+    let mut desk = Harness::new();
+    assert!(!desk.frame(Vec::new()).provides_text_actions);
+    assert!(desk.state.touch.buttons.is_empty());
+}
+
+#[test]
+fn a_narrow_touch_composer_gives_the_actions_their_own_row() {
+    let mut h = Harness::touch("hello");
+    h.width = 300.0;
+    h.idle(2);
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let t = &h.state.touch;
+    assert_eq!(t.buttons.len(), 4);
+    for (_, b) in &t.buttons {
+        assert!(!b.intersects(t.view), "{b:?} over {:?}", t.view);
+        assert!(b.right() <= 300.0, "{b:?}");
+    }
+}
+
+#[test]
+fn action_buttons_select_copy_cut_and_paste_with_chips_as_wire() {
+    let target = MentionRef::new("session", "desk/9", "Pasted");
+    let wire = format!("see {}", encode(&target));
+    let mut h = Harness::touch("");
+    h.state.set_wire(&wire);
+    h.idle(2);
+    h.tap(h.state.touch.view.center());
+    h.idle(2);
+    assert_eq!(h.state.text(), "see @Pasted");
+
+    h.tap(h.action(TextAction::SelectAll));
+    h.idle(1);
+    assert!(h.focused(), "a button tap keeps focus");
+    assert_eq!(h.cursor(), Some((0, 11)));
+
+    let out = h.tap(h.action(TextAction::Copy));
+    assert_eq!(copied(&out), vec![wire.clone()]);
+    assert_eq!(h.state.text(), "see @Pasted");
+
+    h.idle(1);
+    let out = h.tap(h.action(TextAction::Cut));
+    assert_eq!(copied(&out), vec![wire.clone()]);
+    h.idle(1);
+    assert!(h.state.text().is_empty());
+    assert!(h.state.spans().is_empty());
+    assert!(h.focused());
+
+    h.clipboard = Some(wire.clone());
+    h.tap(h.action(TextAction::Paste));
+    h.idle(2);
+    assert_eq!(h.state.text(), "see @Pasted");
+    assert_eq!(h.state.spans()[0].target, target);
+    assert_eq!(h.state.message().wire, wire);
+}
+
+#[test]
+fn paste_without_a_clipboard_reader_asks_the_integration() {
+    let mut h = Harness::touch("x");
+    h.tap(h.state.touch.view.center());
+    h.idle(2);
+    let out = h.tap(h.action(TextAction::Paste));
+    let asked = out.viewport_output[&ViewportId::ROOT]
+        .commands
+        .iter()
+        .any(|c| matches!(c, egui::ViewportCommand::RequestPaste));
+    assert!(asked);
 }

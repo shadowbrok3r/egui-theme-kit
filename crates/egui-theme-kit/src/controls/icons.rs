@@ -51,9 +51,12 @@ pub const EXPAND: Icon = Icon::painted(expand);
 pub const COLLAPSE: Icon = Icon::painted(collapse);
 pub const QUESTION: Icon = Icon::painted(question);
 pub const SHIELD: Icon = Icon::painted(shield);
+pub const CUT: Icon = Icon::painted(cut);
+pub const PASTE: Icon = Icon::painted(paste);
+pub const SELECT_ALL: Icon = Icon::painted(select_all);
 
 /// Every icon of the set with its name.
-pub const ALL: [(&str, Icon); 44] = [
+pub const ALL: [(&str, Icon); 47] = [
     ("caret-down", CARET_DOWN),
     ("caret-up", CARET_UP),
     ("caret-right", CARET_RIGHT),
@@ -98,6 +101,9 @@ pub const ALL: [(&str, Icon); 44] = [
     ("collapse", COLLAPSE),
     ("question", QUESTION),
     ("shield", SHIELD),
+    ("cut", CUT),
+    ("paste", PASTE),
+    ("select-all", SELECT_ALL),
 ];
 
 /// A square slot with unit coordinates, a stroke width and a colour.
@@ -496,6 +502,39 @@ fn shield(p: &Painter, r: Rect, c: Color32) {
         (0.18, 0.24),
     ]);
     pen.line(&[(0.36, 0.5), (0.46, 0.6), (0.65, 0.4)]);
+}
+
+fn cut(p: &Painter, r: Rect, c: Color32) {
+    let pen = Pen::new(p, r, c);
+    pen.ring(0.3, 0.74, 0.12);
+    pen.ring(0.7, 0.74, 0.12);
+    pen.line(&[(0.37, 0.64), (0.68, 0.14)]);
+    pen.line(&[(0.63, 0.64), (0.32, 0.14)]);
+}
+
+fn paste(p: &Painter, r: Rect, c: Color32) {
+    let pen = Pen::new(p, r, c);
+    pen.rounded_outline((0.2, 0.18), (0.8, 0.88), 0.06);
+    pen.outline((0.36, 0.1), (0.64, 0.26));
+    pen.line(&[(0.34, 0.48), (0.66, 0.48)]);
+    pen.line(&[(0.34, 0.66), (0.56, 0.66)]);
+}
+
+fn select_all(p: &Painter, r: Rect, c: Color32) {
+    let pen = Pen::new(p, r, c);
+    for (x, y, dx, dy) in [
+        (0.14, 0.14, 1.0, 1.0),
+        (0.86, 0.14, -1.0, 1.0),
+        (0.14, 0.86, 1.0, -1.0),
+        (0.86, 0.86, -1.0, -1.0),
+    ] {
+        pen.line(&[(x, y + 0.16 * dy), (x, y), (x + 0.16 * dx, y)]);
+    }
+    pen.line(&[(0.44, 0.14), (0.56, 0.14)]);
+    pen.line(&[(0.44, 0.86), (0.56, 0.86)]);
+    pen.line(&[(0.14, 0.44), (0.14, 0.56)]);
+    pen.line(&[(0.86, 0.44), (0.86, 0.56)]);
+    pen.filled(&[(0.36, 0.36), (0.64, 0.36), (0.64, 0.64), (0.36, 0.64)]);
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ mod tests;
 pub use composer::{
     Activity, Composer, ComposerAction, ComposerMode, ComposerResponse, ComposerState,
     EnterBehavior, MentionSpan, OutgoingText, PlusItem, SendIntent, SlashCommand, SlashSource,
+    TextAction,
 };
 pub use icons::ChatIcons;
 pub use mention::{

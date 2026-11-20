@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use egui::{Id, Label, Sense, TextFormat, TextStyle, Ui, UiBuilder, text::LayoutJob};
+use egui::{
+    Id, Label, Rect, Sense, TextFormat, TextStyle, Ui, UiBuilder, style::ScrollAnimation,
+    text::LayoutJob, vec2,
+};
 use egui_json_tree::{
     DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
     pointer::JsonPointerSegment,
@@ -111,6 +114,8 @@ struct TreeMemory {
     fingerprint: (usize, usize),
     nodes: usize,
     bytes: usize,
+    /// A touch drag taken from a tree label scrolls the enclosing scroll area.
+    scrolling: bool,
 }
 
 /// What a payload tree frame produced.
@@ -180,7 +185,7 @@ impl<'a> PayloadTree<'a> {
         let mut out = PayloadTreeResponse::default();
         let mut picked = None;
 
-        ui.scope_builder(UiBuilder::new().scope_id(id), |ui| {
+        let scope = ui.scope_builder(UiBuilder::new().scope_id(id), |ui| {
             ui.horizontal(|ui| {
                 let expand_all = IconButton::new(icons.expand, IconBox::Sm)
                     .tip("Expand all")
@@ -251,6 +256,9 @@ impl<'a> PayloadTree<'a> {
                 ui.ctx().request_repaint();
             }
         });
+        if touch {
+            scroll_label_drags(ui, scope.response.rect, &mut mem.scrolling);
+        }
 
         ui.ctx().data_mut(|d| d.insert_temp(mem_id, mem));
         out
@@ -348,6 +356,29 @@ fn render_token(
     ui.add(Label::new(galley).sense(Sense::click()));
 }
 
+/// Stops drags held by labels inside `rect` and scrolls the enclosing scroll area with the finger instead.
+fn scroll_label_drags(ui: &Ui, rect: Rect, scrolling: &mut bool) {
+    let ctx = ui.ctx();
+    let inside = ctx.dragged_id().is_some_and(|id| {
+        ctx.viewport(|v| {
+            v.this_pass
+                .widgets
+                .get(id)
+                .is_some_and(|w| rect.expand(1.0).contains_rect(w.interact_rect))
+        })
+    });
+    if inside {
+        ctx.stop_dragging();
+        *scrolling = true;
+    }
+    let (down, delta) = ctx.input(|i| (i.pointer.primary_down(), i.pointer.delta()));
+    if !down {
+        *scrolling = false;
+    } else if *scrolling && delta.y != 0.0 {
+        ui.scroll_with_delta_animation(vec2(0.0, delta.y), ScrollAnimation::none());
+    }
+}
+
 /// Width left for a token before the visible right edge.
 fn token_wrap_width(ui: &Ui) -> f32 {
     let left = ui.available_rect_before_wrap().left();
@@ -413,5 +444,77 @@ mod tests {
             }
             assert!(width <= 221.0, "touch {touch}: tree is {width} wide");
         }
+    }
+
+    #[test]
+    fn a_touch_drag_on_a_colon_scrolls_the_enclosing_area() {
+        use egui::{
+            Event, Modifiers, PointerButton, Pos2, RawInput, Rect, ScrollArea, TouchDeviceId,
+            TouchId, TouchPhase,
+        };
+        let ctx = egui::Context::default();
+        let value = Value::Object(
+            (0..40)
+                .map(|n| (format!("key{n:02}"), Value::from(n)))
+                .collect(),
+        );
+        let finger = |phase, pos| Event::Touch {
+            device_id: TouchDeviceId(1),
+            id: TouchId(1),
+            phase,
+            pos,
+            force: None,
+        };
+        let mut time = 0.0;
+        let mut frame = |events: Vec<Event>| {
+            time += 1.0 / 60.0;
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0))),
+                time: Some(time),
+                events,
+                ..RawInput::default()
+            };
+            let mut offset = 0.0;
+            let mut out = ctx.run_ui(raw, |ui| {
+                offset = ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        PayloadTree::new(Id::unique("colons"), &value, PayloadRole::Result)
+                            .touch(true)
+                            .show(ui);
+                    })
+                    .state
+                    .clamped_offset()
+                    .y;
+            });
+            out.textures_delta.clear();
+            let colon = out.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Text(t) if t.galley.text().starts_with(':') => {
+                    let rect = Rect::from_min_size(t.pos, t.galley.size());
+                    (rect.center().y > 40.0 && rect.center().y < 160.0).then_some(rect.center())
+                }
+                _ => None,
+            });
+            (offset, colon)
+        };
+        frame(vec![finger(TouchPhase::Cancel, Pos2::ZERO)]);
+        let (_, colon) = frame(Vec::new());
+        let p = colon.expect("a colon is drawn");
+        frame(vec![
+            finger(TouchPhase::Start, p),
+            Event::PointerMoved(p),
+            Event::PointerButton {
+                pos: p,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        let mut offset = 0.0;
+        for dy in [20.0, 40.0, 60.0, 60.0] {
+            let q = p - egui::vec2(0.0, dy);
+            offset = frame(vec![finger(TouchPhase::Move, q), Event::PointerMoved(q)]).0;
+        }
+        assert!(offset > 30.0, "{offset}");
     }
 }

@@ -5,6 +5,7 @@ use std::ops::Range;
 
 use super::edit::{self, byte_at, from_wire};
 use super::popup::Popup;
+use super::touch::TouchState;
 use crate::chat::mention::{MentionRef, MentionSource, Resolution, encode};
 use crate::controls::CommandPaletteState;
 
@@ -83,6 +84,7 @@ pub struct ComposerState {
     pub(super) right_w: f32,
     /// Height of the text area, from the last frame.
     pub(super) text_h: f32,
+    pub(super) touch: TouchState,
 }
 
 impl ComposerState {

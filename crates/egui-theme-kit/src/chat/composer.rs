@@ -5,6 +5,7 @@ mod plus;
 mod popup;
 mod slash;
 mod state;
+mod touch;
 mod trigger;
 
 #[cfg(test)]
@@ -15,7 +16,8 @@ use std::sync::Arc;
 use egui::{
     Align, AsIdSalt, Context, Event, EventFilter, FontId, Frame, Galley, Id, IdSalt, Image,
     InputState, Key, KeyboardShortcut, Layout, Margin, Modifiers, OutputCommand, Rect, Response,
-    ScrollArea, Sense, Stroke, StrokeKind, TextBuffer, TextEdit, TextStyle, Ui, UiBuilder,
+    ScrollArea, Sense, Stroke, StrokeKind, SurrenderFocusOn, TextBuffer, TextEdit, TextStyle, Ui,
+    UiBuilder, ViewportCommand,
     load::SizedTexture,
     pos2,
     text::{CCursor, CCursorRange, LayoutJob, TextFormat},
@@ -24,6 +26,7 @@ use egui::{
 
 pub use slash::{PlusItem, SlashCommand, SlashSource};
 pub use state::{ComposerState, MentionSpan, OutgoingText};
+pub use touch::TextAction;
 
 use super::icons::ChatIcons;
 use super::mention::{MentionSource, Resolution, clean_label};
@@ -33,6 +36,7 @@ use super::transcript::AttachmentChip;
 use super::types::CowStr;
 use crate::controls::{IconBox, IconButton, Metrics, elided};
 use popup::Suggestion;
+use touch::Gesture;
 use trigger::Trigger;
 
 /// Narrowest touch target.
@@ -191,9 +195,14 @@ pub struct ComposerResponse {
     pub file_hover: bool,
     /// Files were dropped over the composer this frame; they are left in the input for the app.
     pub files_dropped: bool,
+    /// The composer drew its cut, copy, paste and select-all buttons this frame.
+    pub provides_text_actions: bool,
 }
 
 type Slot<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
+
+/// Reads the system clipboard on a paste tap.
+pub type ClipboardRead<'a> = &'a dyn Fn() -> Option<String>;
 
 fn text_id_of(id_salt: IdSalt) -> Id {
     Id::unique("egui_theme_kit.chat.composer").with_salt(id_salt)
@@ -217,6 +226,9 @@ pub struct Composer<'a> {
     leading: Option<Slot<'a>>,
     trailing: Option<Slot<'a>>,
     above: Option<Slot<'a>>,
+    touch: Option<bool>,
+    text_actions: bool,
+    clipboard: Option<ClipboardRead<'a>>,
 }
 
 impl<'a> Composer<'a> {
@@ -238,6 +250,9 @@ impl<'a> Composer<'a> {
             leading: None,
             trailing: None,
             above: None,
+            touch: None,
+            text_actions: true,
+            clipboard: None,
         }
     }
 
@@ -329,11 +344,31 @@ impl<'a> Composer<'a> {
         self
     }
 
+    /// Forces touch handling on or off; defaults to whether the screen is touched.
+    pub fn touch(mut self, touch: bool) -> Self {
+        self.touch = Some(touch);
+        self
+    }
+
+    /// Whether touch screens get the built-in cut, copy, paste and select-all row; on by default.
+    pub fn text_actions(mut self, show: bool) -> Self {
+        self.text_actions = show;
+        self
+    }
+
+    /// Clipboard reader for the paste button; without one it asks the integration with [`ViewportCommand::RequestPaste`].
+    pub fn clipboard(mut self, read: ClipboardRead<'a>) -> Self {
+        self.clipboard = Some(read);
+        self
+    }
+
     pub fn show(self, ui: &mut Ui, state: &mut ComposerState) -> ComposerResponse {
         let text_id = text_id_of(self.id_salt);
         let parts = text_id.with("egui_theme_kit.chat.composer.parts");
         let ctx = ui.ctx().clone();
-        let touch = ui.input(|i| i.has_touch_screen());
+        let touch = self
+            .touch
+            .unwrap_or_else(|| ui.input(|i| i.has_touch_screen()));
         let m = Metrics::get(&ctx);
         let look = Look {
             p: ChatPalette::get(&ctx),
@@ -368,6 +403,8 @@ impl<'a> Composer<'a> {
             leading,
             trailing,
             above,
+            text_actions,
+            clipboard,
             ..
         } = self;
         let enter = enter.unwrap_or_else(|| EnterBehavior::for_ui(ui));
@@ -377,6 +414,7 @@ impl<'a> Composer<'a> {
 
         if let Some(cursor) = state.pending_cursor.take() {
             store_cursor(&ctx, text_id, cursor, cursor, Some(state.text()));
+            state.touch.track = true;
         }
         let unresolved = resolve_labels(&ctx, text_id, state, mentions, mention_revision);
 
@@ -385,6 +423,36 @@ impl<'a> Composer<'a> {
         }
 
         let focused = editable && ctx.memory(|mem| mem.has_focus(text_id));
+        if let Some(text) = state.touch.pending_paste.take().filter(|_| focused) {
+            ctx.input_mut(|i| i.events.push(Event::Paste(text)));
+        }
+        if touch::text_hash(state.text()) != state.touch.drawn {
+            state.touch.track = true;
+        }
+        let step = if touch && editable {
+            let cursor = cursor_of(&ctx, text_id);
+            touch::advance(&ctx, &mut state.touch, focused, cursor)
+        } else {
+            state.touch.gesture = Gesture::Idle;
+            touch::Step::default()
+        };
+        if let Some((a, b)) = step.restore {
+            store_cursor(&ctx, text_id, a, b, None);
+        }
+        let actions = (touch && editable && text_actions && focused).then(|| {
+            let selected = cursor_of(&ctx, text_id).is_some_and(|(a, b)| a != b);
+            Actions {
+                copy: selected,
+                select: !state.text().is_empty(),
+            }
+        });
+        let guard = actions.is_some()
+            && ctx.input(|i| {
+                i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| state.touch.on_button(p))
+            });
+        state.touch.buttons.clear();
         if let Some(popup) = state.popup.as_mut().filter(|_| focused)
             && let Some(i) = popup::show_scoped(ui, parts.with("popup"), popup, look.row_h)
         {
@@ -427,6 +495,7 @@ impl<'a> Composer<'a> {
                         command: is_command(state.text(), slash),
                         leading,
                         trailing,
+                        actions,
                     };
                     let old_text = state.text().to_owned();
                     let old_spans = state.spans().to_vec();
@@ -441,9 +510,22 @@ impl<'a> Composer<'a> {
                         enter,
                         unresolved: &unresolved,
                         popup: state.popup.is_some(),
+                        scroll_by: step.scroll_by,
+                        track: state.touch.track && state.touch.gesture != Gesture::Scrolling,
                     };
+                    let surrender = guard.then(|| {
+                        ctx.options_mut(|o| {
+                            std::mem::replace(
+                                &mut o.input_options.surrender_focus_on,
+                                SurrenderFocusOn::Never,
+                            )
+                        })
+                    });
                     let (text_response, clicked) =
                         controls.lay_out(ui, state, text_area, narrow, &mut out);
+                    if let Some(on) = surrender {
+                        ctx.options_mut(|o| o.input_options.surrender_focus_on = on);
+                    }
                     send_clicked = clicked;
                     after_edit(
                         &ctx,
@@ -484,7 +566,17 @@ impl<'a> Composer<'a> {
                 .or_else(|| send(state, &mode, out.intent, attachments, slash));
         }
 
+        if let Some(action) = out.text_action.take() {
+            apply_text_action(&ctx, text_id, state, action, clipboard);
+        }
         let has_focus = ctx.memory(|mem| mem.has_focus(text_id));
+        let regain = std::mem::take(&mut state.touch.regain);
+        if touch && editable && has_focus && !state.touch.was_focused && !regain {
+            let end = state.char_len();
+            store_cursor(&ctx, text_id, end, end, None);
+            state.touch.track = true;
+        }
+        state.touch.was_focused = has_focus;
         let unplaced = claims_unplaced_drop(&ctx, text_id, has_focus);
         let (file_hover, files_dropped) = ctx.input(|i| {
             let over = i
@@ -522,6 +614,7 @@ impl<'a> Composer<'a> {
         );
         if state.refocus && !state.plus.is_open() {
             state.refocus = false;
+            state.touch.regain = true;
             ctx.memory_mut(|mem| mem.request_focus(text_id));
         }
 
@@ -531,6 +624,7 @@ impl<'a> Composer<'a> {
             accepted_suggestion: out.accepted,
             file_hover,
             files_dropped,
+            provides_text_actions: actions.is_some(),
         }
     }
 }
@@ -554,6 +648,8 @@ struct Outcome {
     intent: Option<SendIntent>,
     /// A popup pick key arrived; `true` when it was Enter. Applied after the text edit.
     pick: Option<bool>,
+    /// A text action button was tapped; applied after the text edit.
+    text_action: Option<TextAction>,
 }
 
 /// The composer that takes files dropped without a pointer position, and the pass it was drawn in.
@@ -804,6 +900,50 @@ fn send(
     Some(ComposerAction::Send { intent, message })
 }
 
+/// Carries out a tap on the text action row.
+fn apply_text_action(
+    ctx: &Context,
+    id: Id,
+    state: &mut ComposerState,
+    action: TextAction,
+    clipboard: Option<ClipboardRead<'_>>,
+) {
+    let selection = cursor_of(ctx, id)
+        .map(|(a, b)| a.min(b)..a.max(b))
+        .filter(|r| !r.is_empty());
+    match action {
+        TextAction::SelectAll => store_cursor(ctx, id, 0, state.char_len(), None),
+        TextAction::Copy | TextAction::Cut => {
+            let Some(range) = selection else {
+                return;
+            };
+            ctx.copy_text(selected_wire(state, range.clone()));
+            if action == TextAction::Cut {
+                let cursor = state.replace(range, "");
+                store_cursor(ctx, id, cursor, cursor, Some(state.text()));
+            }
+        }
+        TextAction::Paste => match clipboard {
+            Some(read) => state.touch.pending_paste = read().filter(|t| !t.is_empty()),
+            None => ctx.send_viewport_cmd(ViewportCommand::RequestPaste),
+        },
+    }
+    state.touch.track = true;
+    ctx.request_repaint();
+}
+
+/// Chars `range` of the buffer with whole chips in wire form.
+fn selected_wire(state: &ComposerState, range: std::ops::Range<usize>) -> String {
+    edit::wire_slice(state.text(), state.spans(), range.clone()).unwrap_or_else(|| {
+        state
+            .text()
+            .chars()
+            .skip(range.start)
+            .take(range.len())
+            .collect()
+    })
+}
+
 /// Snapshot taken before the text edit ran.
 struct EditFrame<'s> {
     old_text: &'s str,
@@ -933,6 +1073,10 @@ struct TextArea<'s> {
     unresolved: &'s [bool],
     /// The popup is open, so Tab and Escape reach the composer instead of moving focus.
     popup: bool,
+    /// Points a touch drag moved the text down by.
+    scroll_by: f32,
+    /// Scroll the cursor into view.
+    track: bool,
 }
 
 impl TextArea<'_> {
@@ -940,6 +1084,7 @@ impl TextArea<'_> {
     fn show_in(self, ui: &mut Ui, state: &mut ComposerState, rect: Rect) -> (Response, f32) {
         let p = ChatPalette::of(ui);
         let font = TextStyle::Body.resolve(ui.style());
+        let row_h = ui.fonts_mut(|f| f.row_height(&font));
         let spans = state.spans().to_vec();
         let unresolved = self.unresolved.to_vec();
         let before = state.text().to_owned();
@@ -973,14 +1118,19 @@ impl TextArea<'_> {
                 .max_rect(rect)
                 .layout(Layout::top_down(Align::Min)),
         );
-        let response = ScrollArea::vertical()
+        let mut area = ScrollArea::vertical()
             .id_salt(self.scroll)
             .max_height(self.max_h)
             .auto_shrink([false, true])
-            .show(&mut child, |ui| {
-                let edit = TextEdit::multiline(state.buffer_mut());
-                let filter = edit.get_event_filter();
-                edit.event_filter(EventFilter {
+            .animated(false);
+        if self.scroll_by != 0.0 {
+            area = area.vertical_scroll_offset(state.touch.scroll_y - self.scroll_by);
+        }
+        let output = area.show(&mut child, |ui| {
+            let edit = TextEdit::multiline(state.buffer_mut());
+            let filter = edit.get_event_filter();
+            let out = edit
+                .event_filter(EventFilter {
                     tab: filter.tab || self.popup,
                     escape: filter.escape || self.popup,
                     ..filter
@@ -993,12 +1143,49 @@ impl TextArea<'_> {
                 .interactive(self.editable)
                 .return_key(return_key)
                 .layouter(&mut layouter)
-                .show(ui)
-                .response
-                .response
-            })
-            .inner;
+                .show(ui);
+            let focused = ui.memory(|mem| mem.has_focus(self.id));
+            let cursor = out.cursor_range.map(|r| {
+                let mut rect = out.galley.pos_from_cursor(r.primary);
+                if rect.height() < 1.0 {
+                    rect.max.y = rect.min.y + row_h;
+                }
+                rect.translate(out.galley_pos.to_vec2())
+            });
+            if let Some(rect) = cursor
+                && (self.track || (focused && out.response.response.changed()))
+            {
+                ui.scroll_to_rect(rect, None);
+            }
+            (
+                out.response.response,
+                cursor,
+                focused,
+                touch::text_hash(state.text()),
+            )
+        });
+        let (response, cursor, focused, drawn) = output.inner;
         let height = child.min_rect().height();
+        let view = Rect::from_min_size(
+            output.inner_rect.min,
+            vec2(
+                output.inner_rect.width(),
+                output.inner_rect.height().min(height),
+            ),
+        );
+        let t = &mut state.touch;
+        let resized = (view.height() - t.view.height()).abs() > RELAYOUT_EPS
+            || (self.max_h - t.max_h).abs() > RELAYOUT_EPS;
+        t.view = view;
+        t.scroll_y = output.state.clamped_offset().y;
+        t.scroll_max = (output.content_size.y - view.height()).max(0.0);
+        t.max_h = self.max_h;
+        t.cursor = cursor.unwrap_or(Rect::NOTHING);
+        t.drawn = drawn;
+        t.track = focused && resized && t.gesture != Gesture::Scrolling;
+        if t.track {
+            ui.ctx().request_repaint();
+        }
         if (height - state.text_h).abs() > RELAYOUT_EPS {
             state.text_h = height;
             ui.ctx().request_repaint();
@@ -1111,12 +1298,54 @@ struct Controls<'s, 'a> {
     command: bool,
     leading: Option<Slot<'a>>,
     trailing: Option<Slot<'a>>,
+    /// The text action row, shown on touch while the text has focus.
+    actions: Option<Actions>,
+}
+
+/// Which text actions apply now.
+#[derive(Clone, Copy)]
+struct Actions {
+    /// Some text is selected.
+    copy: bool,
+    /// There is text to select.
+    select: bool,
+}
+
+/// Width of the text action row with buttons of side `side`.
+fn action_row_w(side: f32, gap: f32) -> f32 {
+    TextAction::ALL.len() as f32 * (side + gap)
+}
+
+/// Cut, copy, paste and select-all buttons; records their rects and the tapped one.
+fn action_buttons(
+    ui: &mut Ui,
+    look: &Look,
+    actions: Actions,
+    state: &mut ComposerState,
+    out: &mut Outcome,
+) {
+    for action in TextAction::ALL {
+        let (icon, enabled) = match action {
+            TextAction::Cut => (look.icons.cut, actions.copy),
+            TextAction::Copy => (look.icons.copy, actions.copy),
+            TextAction::Paste => (look.icons.paste, true),
+            TextAction::SelectAll => (look.icons.select_all, actions.select),
+        };
+        let response = IconButton::new(icon, look.icon_box)
+            .tip(action.label())
+            .enabled(enabled)
+            .show(ui);
+        state.touch.buttons.push((action, response.rect));
+        if response.clicked() {
+            out.text_action = Some(action);
+        }
+    }
 }
 
 impl Controls<'_, '_> {
     /// Lays out the controls and `text`: one row when wide, a control row over the text when narrow.
     fn lay_out(
-        self,
+        mut self,
         ui: &mut Ui,
         state: &mut ComposerState,
         text: TextArea<'_>,
@@ -1130,8 +1359,31 @@ impl Controls<'_, '_> {
         let max_h = text.max_h;
         if narrow {
             let bar = Rect::from_min_size(origin, vec2(width, side));
+            let base_left = if state.touch.base_left_w > 0.0 {
+                state.touch.base_left_w
+            } else {
+                side + gap.x
+            };
+            let apart = self
+                .actions
+                .filter(|_| base_left + action_row_w(side, gap.x) + state.right_w > width);
+            if apart.is_some() {
+                self.actions = None;
+            }
+            let look = self.look;
             let clicked = self.sides(ui, state, bar, Align::Center, out);
-            let top = bar.bottom() + gap.y;
+            let mut top = bar.bottom() + gap.y;
+            if let Some(actions) = apart {
+                let row = Rect::from_min_size(pos2(origin.x, top), vec2(width, side));
+                let mut strip = ui.new_child(
+                    UiBuilder::new()
+                        .id_salt("egui_theme_kit.chat.composer.actions")
+                        .max_rect(row)
+                        .layout(Layout::left_to_right(Align::Center)),
+                );
+                action_buttons(&mut strip, look, actions, state, out);
+                top = row.bottom() + gap.y;
+            }
             let area = Rect::from_min_size(pos2(origin.x, top), vec2(width, max_h));
             let (response, h) = text.show_in(ui, state, area);
             ui.advance_cursor_after_rect(Rect::from_min_max(
@@ -1180,6 +1432,7 @@ impl Controls<'_, '_> {
             command,
             leading,
             trailing,
+            actions,
         } = self;
         let gap = ui.spacing().item_spacing.x;
         let mut left = ui.new_child(
@@ -1198,6 +1451,10 @@ impl Controls<'_, '_> {
         {
             state.plus.open();
             state.refocus = true;
+        }
+        state.touch.base_left_w = left.min_rect().width() + gap;
+        if let Some(actions) = actions {
+            action_buttons(&mut left, look, actions, state, out);
         }
         remember(ui, &mut state.left_w, left.min_rect().width() + gap);
 
