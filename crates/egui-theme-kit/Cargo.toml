@@ -39,6 +39,12 @@ picker = []
 icon-pack = ["controls", "dep:egui-icon-pack"]
 # `controls::QrCode`, a QR code painted from a string.
 qr = ["controls", "dep:qrcode"]
+# Shared AI chat widgets: transcript, session bar and composer.
+chat = ["controls"]
+# Chat payloads drawn as `egui_json_tree` trees.
+chat-json = ["chat", "dep:egui_json_tree"]
+# Syntect highlighting for chat code blocks.
+chat-syntax = ["chat", "egui_extras/syntect"]
 
 [dependencies]
 eframe = { workspace = true, features = ["default_fonts", "persistence", "serde"], optional = true }
@@ -59,6 +65,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"], opti
 regex = { version = "1", optional = true }
 egui-icon-pack = { path = "../egui-icon-pack", default-features = false, optional = true }
 qrcode = { version = "0.14", default-features = false, optional = true }
+egui_json_tree = { version = "0.18", default-features = false, features = ["serde_json"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = { version = "0.6", optional = true }

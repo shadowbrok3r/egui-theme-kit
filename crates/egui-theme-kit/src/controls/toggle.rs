@@ -1,4 +1,4 @@
-//! Pill switch and checkbox, each with a trailing label.
+//! Pill switch and checkbox with a label beside them.
 
 use egui::{
     Color32, Rect, Response, Role, Sense, TextStyle, Ui, Vec2, WidgetInfo, lerp, pos2, vec2,
@@ -17,52 +17,92 @@ const HOVER_LIFT: f32 = 0.12;
 
 /// A 30 by 17 switch in a [`super::Metrics::control_h`] row; clicking it or its label flips `on`.
 pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
-    let (t, m) = kit(ui);
-    let text =
-        (!label.is_empty()).then(|| text_galley(ui, label, TextStyle::Body.resolve(ui.style())));
-    let label_w = text.as_ref().map_or(0.0, |g| LABEL_GAP + g.size().x);
-    let (rect, mut response) =
-        ui.allocate_exact_size(vec2(whole(TRACK_W + label_w), m.control_h), Sense::click());
-    if response.clicked() {
-        *on = !*on;
-        response.mark_changed();
-    }
-    response.widget_info(|| WidgetInfo::selected(Role::CheckBox, ui.is_enabled(), *on, label));
-    if !ui.is_rect_visible(rect) {
-        return response;
+    Toggle::new(on, label).show(ui)
+}
+
+/// A pill switch with an optional label on either side.
+pub struct Toggle<'a> {
+    on: &'a mut bool,
+    label: &'a str,
+    label_left: bool,
+}
+
+impl<'a> Toggle<'a> {
+    pub fn new(on: &'a mut bool, label: &'a str) -> Self {
+        Self {
+            on,
+            label,
+            label_left: false,
+        }
     }
 
-    let (state, focused) = state_of(ui, &response);
-    let track = Rect::from_min_size(
-        pos2(rect.left(), (rect.center().y - TRACK_H / 2.0).round()),
-        vec2(TRACK_W, TRACK_H),
-    );
-    let how_on = ui.ctx().animate_bool(response.id, *on);
-    let off = if state == State::Rest {
-        t.field_border
-    } else {
-        mix(t.field_border, t.text, HOVER_LIFT)
-    };
-    let fill = mix(off, t.primary, how_on);
-    ui.painter().rect_filled(track, TRACK_H / 2.0, fill);
-    let x = lerp(
-        (track.left() + TRACK_H / 2.0)..=(track.right() - TRACK_H / 2.0),
-        how_on,
-    );
-    ui.painter()
-        .circle_filled(pos2(x, track.center().y), KNOB_R, Color32::WHITE);
-    if focused {
-        focus_ring(ui, track, (TRACK_H / 2.0) as u8, &t);
+    /// Puts the label before the switch.
+    pub fn label_left(mut self, left: bool) -> Self {
+        self.label_left = left;
+        self
     }
-    if let Some(text) = text {
-        let ink = if *on { t.text } else { t.text_dim };
-        let pos = pos2(
-            track.right() + LABEL_GAP,
-            (rect.center().y - text.size().y / 2.0).round(),
+
+    /// Allocates the row and flips `on` when it is clicked.
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let Self {
+            on,
+            label,
+            label_left,
+        } = self;
+        let (t, m) = kit(ui);
+        let text = (!label.is_empty())
+            .then(|| text_galley(ui, label, TextStyle::Body.resolve(ui.style())));
+        let label_w = text.as_ref().map_or(0.0, |g| LABEL_GAP + g.size().x);
+        let (rect, mut response) =
+            ui.allocate_exact_size(vec2(whole(TRACK_W + label_w), m.control_h), Sense::click());
+        if response.clicked() {
+            *on = !*on;
+            response.mark_changed();
+        }
+        response.widget_info(|| WidgetInfo::selected(Role::CheckBox, ui.is_enabled(), *on, label));
+        if !ui.is_rect_visible(rect) {
+            return response;
+        }
+
+        let (state, focused) = state_of(ui, &response);
+        let track_x = if label_left {
+            rect.right() - TRACK_W
+        } else {
+            rect.left()
+        };
+        let track = Rect::from_min_size(
+            pos2(track_x, (rect.center().y - TRACK_H / 2.0).round()),
+            vec2(TRACK_W, TRACK_H),
         );
-        ui.painter().galley(pos, text, ink);
+        let how_on = ui.ctx().animate_bool(response.id, *on);
+        let off = if state == State::Rest {
+            t.field_border
+        } else {
+            mix(t.field_border, t.text, HOVER_LIFT)
+        };
+        let fill = mix(off, t.primary, how_on);
+        ui.painter().rect_filled(track, TRACK_H / 2.0, fill);
+        let x = lerp(
+            (track.left() + TRACK_H / 2.0)..=(track.right() - TRACK_H / 2.0),
+            how_on,
+        );
+        ui.painter()
+            .circle_filled(pos2(x, track.center().y), KNOB_R, Color32::WHITE);
+        if focused {
+            focus_ring(ui, track, (TRACK_H / 2.0) as u8, &t);
+        }
+        if let Some(text) = text {
+            let ink = if *on { t.text } else { t.text_dim };
+            let x = if label_left {
+                rect.left()
+            } else {
+                track.right() + LABEL_GAP
+            };
+            let pos = pos2(x, (rect.center().y - text.size().y / 2.0).round());
+            ui.painter().galley(pos, text, ink);
+        }
+        response
     }
-    response
 }
 
 /// A box in a [`super::Metrics::control_h`] row, checked while `on`; clicking the row flips it.

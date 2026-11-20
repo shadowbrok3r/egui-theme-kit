@@ -261,6 +261,11 @@ pub(crate) fn ink_on(fill: Color32) -> Color32 {
     }
 }
 
+/// Whether light ink reads better than dark ink on `fill`.
+pub(crate) fn is_dark(fill: Color32) -> bool {
+    contrast(LIGHT_INK, fill) > contrast(DARK_INK, fill)
+}
+
 /// Opaque hue of a possibly premultiplied colour.
 fn tint(c: Color32) -> Color32 {
     let [r, g, b, _] = c.to_srgba_unmultiplied();
