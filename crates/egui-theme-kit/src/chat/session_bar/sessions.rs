@@ -2,10 +2,15 @@
 
 use std::hash::Hash;
 
-use egui::{AsIdSalt, IdSalt, Ui};
+use egui::{AsIdSalt, Id, IdSalt, Ui};
 
-use crate::chat::types::{CowStr, SessionStatus, TimeFormat, UnixMs};
-use crate::controls::{Icon, PaletteItem};
+use super::row::SessionItem;
+use crate::chat::icons::ChatIcons;
+use crate::chat::types::{ClockFormat, CowStr, SessionStatus, TimeFormat, Tone, UnixMs};
+use crate::controls::{
+    ButtonKind, Icon, MenuItem, PaletteItem, Section, TextButton, fuzzy_match, hairline, kit,
+    menu_item, menu_separator, popup_menu, search_field, section_label,
+};
 
 /// How a session row is styled and sorted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -15,6 +20,17 @@ pub enum RowKind {
     Pinned,
     Manager,
     Inbox,
+}
+
+impl RowKind {
+    /// Badge text and tone of the kind; none for plain and pinned rows.
+    pub fn badge(self) -> Option<(&'static str, Tone)> {
+        match self {
+            Self::Normal | Self::Pinned => None,
+            Self::Manager => Some(("Manager", Tone::Accent)),
+            Self::Inbox => Some(("Inbox", Tone::Info)),
+        }
+    }
 }
 
 /// One session in the list: title, subtitle, status, last update and unread count.
@@ -27,6 +43,53 @@ pub struct SessionRow<'a, K> {
     pub updated: Option<UnixMs>,
     pub unread: u32,
     pub kind: RowKind,
+}
+
+impl<'a, K> SessionRow<'a, K> {
+    pub fn new(key: K, title: impl Into<CowStr<'a>>) -> Self {
+        Self {
+            key,
+            title: title.into(),
+            subtitle: CowStr::Borrowed(""),
+            status: SessionStatus::Idle,
+            updated: None,
+            unread: 0,
+            kind: RowKind::Normal,
+        }
+    }
+
+    pub fn subtitle(mut self, subtitle: impl Into<CowStr<'a>>) -> Self {
+        self.subtitle = subtitle.into();
+        self
+    }
+
+    pub fn status(mut self, status: SessionStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    pub fn updated(mut self, at: UnixMs) -> Self {
+        self.updated = Some(at);
+        self
+    }
+
+    pub fn unread(mut self, count: u32) -> Self {
+        self.unread = count;
+        self
+    }
+
+    pub fn kind(mut self, kind: RowKind) -> Self {
+        self.kind = kind;
+        self
+    }
+}
+
+/// Whether a row titled `title` over `subtitle` matches the search `query`.
+pub(super) fn row_matches(query: &str, title: &str, subtitle: &str) -> bool {
+    let query = query.trim();
+    query.is_empty()
+        || fuzzy_match(query, title).is_some()
+        || fuzzy_match(query, subtitle).is_some()
 }
 
 /// A titled, foldable group of rows.
@@ -64,6 +127,16 @@ pub struct SessionList<'a, K, M> {
     icon_only: bool,
     row_menu: &'a [MenuEntry<'a, M>],
     time_format: Option<&'a dyn TimeFormat>,
+    now: Option<UnixMs>,
+}
+
+/// What every row of one list draws with.
+struct RowCtx<'a, K, M> {
+    id: Id,
+    selected: Option<&'a K>,
+    icon_only: bool,
+    row_menu: &'a [MenuEntry<'a, M>],
+    format: &'a dyn TimeFormat,
     now: Option<UnixMs>,
 }
 
@@ -128,20 +201,115 @@ impl<'a, K: Clone + Hash + PartialEq, M: Clone> SessionList<'a, K, M> {
             time_format,
             now,
         } = self;
-        let _ = (
-            ui,
-            id_salt,
-            pinned,
-            sections,
+        let id = ui.make_persistent_id(id_salt);
+        let fallback = ClockFormat::default();
+        let c = RowCtx {
+            id,
             selected,
-            search,
             icon_only,
             row_menu,
-            time_format.is_some(),
-            now,
-        );
-        None
+            format: time_format.unwrap_or(&fallback),
+            now: now.or_else(UnixMs::now),
+        };
+        let query = match search {
+            Some(query) if !icon_only => {
+                let width = ui.available_width();
+                search_field(ui, query, "Search sessions", width);
+                query.trim().to_owned()
+            }
+            Some(query) => query.trim().to_owned(),
+            None => String::new(),
+        };
+        let mut action = None;
+        let shown = |r: &&SessionRow<'a, K>| row_matches(&query, &r.title, &r.subtitle);
+        for row in pinned.iter().filter(shown) {
+            action = action.or(row_ui(ui, &c, row));
+        }
+        for (i, section) in sections.iter().enumerate() {
+            let rows: Vec<&SessionRow<'a, K>> = section.rows.iter().filter(shown).collect();
+            if rows.is_empty() && !query.is_empty() {
+                continue;
+            }
+            if icon_only {
+                hairline(ui);
+                for row in rows {
+                    action = action.or(row_ui(ui, &c, row));
+                }
+                continue;
+            }
+            let count = rows.len().to_string();
+            let forced = (!query.is_empty()).then_some(true);
+            let picked = Section::new(("section", i), &section.title)
+                .id(id.with(("section", i)))
+                .default_open(!section.collapsed_by_default)
+                .open(forced)
+                .suffix(&count, None)
+                .show(ui, |ui| {
+                    let mut picked = None;
+                    for row in rows {
+                        picked = picked.or(row_ui(ui, &c, row));
+                    }
+                    picked
+                })
+                .flatten();
+            action = action.or(picked);
+        }
+        action
     }
+}
+
+/// Id of the row keyed `key` in the list `list`.
+pub(super) fn row_id(list: Id, key: &impl Hash) -> Id {
+    list.with(("row", egui::util::hash(key)))
+}
+
+/// One row and its context menu.
+fn row_ui<K: Clone + Hash + PartialEq, M: Clone>(
+    ui: &mut Ui,
+    c: &RowCtx<'_, K, M>,
+    row: &SessionRow<'_, K>,
+) -> Option<SessionListAction<K, M>> {
+    let time = row.updated.map(|at| c.format.label(at, c.now));
+    let mut item = SessionItem::new(&row.title)
+        .subtitle(&row.subtitle)
+        .status(row.status)
+        .unread(row.unread)
+        .selected(c.selected.is_some_and(|k| *k == row.key))
+        .collapsed(c.icon_only)
+        .id(row_id(c.id, &row.key));
+    if let Some(time) = &time {
+        item = item.updated(time);
+    }
+    if let Some((text, tone)) = row.kind.badge() {
+        item = item.badge(text, tone);
+    }
+    let response = item.show(ui);
+    let mut action = response
+        .clicked()
+        .then(|| SessionListAction::Open(row.key.clone()));
+    response.context_menu(|ui| {
+        let icons = ChatIcons::get(ui.ctx());
+        if menu_item(ui, icons.mention, "Mention in chat").clicked() {
+            action = Some(SessionListAction::MentionInChat(row.key.clone()));
+        }
+        if !c.row_menu.is_empty() {
+            menu_separator(ui);
+        }
+        for entry in c.row_menu {
+            let clicked = MenuItem::new(&entry.label)
+                .icon(entry.icon)
+                .danger(entry.danger)
+                .show(ui)
+                .clicked();
+            if clicked {
+                action = Some(SessionListAction::Menu {
+                    key: row.key.clone(),
+                    item: entry.id.clone(),
+                });
+            }
+        }
+    });
+    action
 }
 
 /// What the new-session button produced.
@@ -168,7 +336,56 @@ impl<'a, T: Clone> NewSessionButton<'a, T> {
     }
 
     pub fn show(self, ui: &mut Ui) -> Option<NewSession<T>> {
-        let _ = (ui, &self.label, self.items);
-        None
+        let (_, m) = kit(ui);
+        let icons = ChatIcons::get(ui.ctx());
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = (m.gap.x / 4.0).round();
+            let main = TextButton::new(&self.label)
+                .icon(icons.plus)
+                .kind(ButtonKind::Primary)
+                .prominent(true)
+                .show(ui);
+            let mut out = main.clicked().then_some(NewSession::Default);
+            if self.items.is_empty() {
+                return out;
+            }
+            let caret = TextButton::new("")
+                .icon(icons.chevron_down)
+                .kind(ButtonKind::Primary)
+                .prominent(true)
+                .show(ui)
+                .on_hover_text("More session types");
+            let picked = popup_menu(&caret, false, |ui| template_rows(ui, self.items)).flatten();
+            out = out.or(picked.map(NewSession::Item));
+            out
+        })
+        .inner
     }
+}
+
+/// Template rows grouped under their section labels; returns the picked id.
+fn template_rows<T: Clone>(ui: &mut Ui, items: &[PaletteItem<'_, T>]) -> Option<T> {
+    let mut picked = None;
+    let mut section = None;
+    for item in items {
+        if section != Some(item.section) {
+            if section.is_some() {
+                menu_separator(ui);
+            }
+            if !item.section.is_empty() {
+                section_label(ui, item.section);
+            }
+            section = Some(item.section);
+        }
+        let row = MenuItem::new(item.title).icon(item.icon).show(ui);
+        let row = if item.detail.is_empty() {
+            row
+        } else {
+            row.on_hover_text(item.detail)
+        };
+        if row.clicked() {
+            picked = Some(item.id.clone());
+        }
+    }
+    picked
 }
