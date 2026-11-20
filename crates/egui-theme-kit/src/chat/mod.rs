@@ -26,9 +26,9 @@ pub use mention::{
 };
 pub use palette::{ChatPalette, JsonColors, PaletteBuilder, ShellColors, legible};
 pub use session_bar::{
-    AppBarAction, BarButton, ChatAppBar, ChipKind, MenuEntry, NewSession, NewSessionButton,
-    OptionChip, RowKind, SessionBar, SessionBarAction, SessionList, SessionListAction, SessionRow,
-    SessionSection, ViewItem, ViewMenu,
+    AppBarAction, BarButton, BarLayout, ChatAppBar, ChipKind, MenuEntry, NewSession,
+    NewSessionButton, OptionChip, RowKind, SessionBar, SessionBarAction, SessionItem, SessionList,
+    SessionListAction, SessionRow, SessionSection, ViewItem, ViewMenu,
 };
 pub use surface::{
     ChatSurface, FlatSurface, KitGlassSurface, SurfaceKind, paint_surface, set_surface, surface,

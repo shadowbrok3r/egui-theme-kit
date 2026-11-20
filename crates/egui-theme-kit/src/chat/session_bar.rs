@@ -1,11 +1,22 @@
 //! Chat chrome: the global app bar, the per-session title card and the session list.
 
+mod app_bar;
+mod chips;
+mod layout;
+mod parts;
+mod row;
 mod sessions;
+mod title_card;
+
+#[cfg(test)]
+mod tests;
 
 use std::hash::Hash;
 
-use egui::{AsIdSalt, IdSalt, Ui};
+use egui::{AsIdSalt, IdSalt};
 
+pub use layout::BarLayout;
+pub use row::SessionItem;
 pub use sessions::{
     MenuEntry, NewSession, NewSessionButton, RowKind, SessionList, SessionListAction, SessionRow,
     SessionSection,
@@ -25,6 +36,30 @@ pub struct ViewItem<'a, V> {
     pub tone: Tone,
 }
 
+impl<'a, V> ViewItem<'a, V> {
+    pub fn new(value: V, label: impl Into<CowStr<'a>>) -> Self {
+        Self {
+            value,
+            label: label.into(),
+            icon: None,
+            badge: None,
+            tone: Tone::Neutral,
+        }
+    }
+
+    pub fn icon(mut self, icon: impl Into<Icon>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
+    /// A count pill in `tone`; zero draws nothing.
+    pub fn badge(mut self, count: u32, tone: Tone) -> Self {
+        self.badge = Some(count);
+        self.tone = tone;
+        self
+    }
+}
+
 /// A dropdown that switches the main view; the closed menu shows the badge total.
 #[derive(Clone, Debug)]
 pub struct ViewMenu<'a, V> {
@@ -36,12 +71,6 @@ impl<'a, V: Clone + PartialEq> ViewMenu<'a, V> {
     pub fn new(selected: V, items: &'a [ViewItem<'a, V>]) -> Self {
         Self { selected, items }
     }
-
-    /// The picked value when it differs from `selected`.
-    pub fn show(self, ui: &mut Ui) -> Option<V> {
-        let _ = (ui, &self.selected, self.items);
-        None
-    }
 }
 
 /// A square icon button in a bar.
@@ -52,6 +81,29 @@ pub struct BarButton<'a, K> {
     pub tip: CowStr<'a>,
     pub selected: bool,
     pub badge: Option<u32>,
+}
+
+impl<'a, K> BarButton<'a, K> {
+    pub fn new(id: K, icon: impl Into<Icon>, tip: impl Into<CowStr<'a>>) -> Self {
+        Self {
+            id,
+            icon: icon.into(),
+            tip: tip.into(),
+            selected: false,
+            badge: None,
+        }
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    /// A count over the icon's corner; zero draws nothing.
+    pub fn badge(mut self, count: u32) -> Self {
+        self.badge = Some(count);
+        self
+    }
 }
 
 /// What the user did in the app bar.
@@ -104,19 +156,6 @@ impl<'a, V: Clone + PartialEq, K: Clone + Hash> ChatAppBar<'a, V, K> {
         self.trailing = buttons;
         self
     }
-
-    /// Draws the bar with `leading` content first and a rule under it.
-    pub fn show(self, ui: &mut Ui, leading: impl FnOnce(&mut Ui)) -> Option<AppBarAction<V, K>> {
-        let Self {
-            id_salt,
-            view,
-            detail,
-            thinking,
-            trailing,
-        } = self;
-        let _ = (ui, leading, id_salt, view, detail, thinking, trailing);
-        None
-    }
 }
 
 /// What an [`OptionChip`] does when used.
@@ -148,6 +187,35 @@ pub struct OptionChip<'a, K> {
     pub icon: Option<Icon>,
     pub tone: Tone,
     pub kind: ChipKind<'a>,
+}
+
+impl<'a, K> OptionChip<'a, K> {
+    /// A read-only chip; set [`Self::kind`] to make it interactive.
+    pub fn new(id: K, label: impl Into<CowStr<'a>>, value: impl Into<CowStr<'a>>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            value: value.into(),
+            icon: None,
+            tone: Tone::Neutral,
+            kind: ChipKind::Info,
+        }
+    }
+
+    pub fn icon(mut self, icon: impl Into<Icon>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
+    pub fn tone(mut self, tone: Tone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    pub fn kind(mut self, kind: ChipKind<'a>) -> Self {
+        self.kind = kind;
+        self
+    }
 }
 
 /// What the user did in the session title card.
@@ -204,6 +272,7 @@ impl<'a, K: Clone + Hash> SessionBar<'a, K> {
         self
     }
 
+    /// Double-clicking the title, or Rename in the overflow menu, edits it in place.
     pub fn renamable(mut self, renamable: bool) -> Self {
         self.renamable = renamable;
         self
@@ -229,34 +298,5 @@ impl<'a, K: Clone + Hash> SessionBar<'a, K> {
     pub fn error(mut self, error: impl Into<CowStr<'a>>) -> Self {
         self.error = Some(error.into());
         self
-    }
-
-    pub fn show(self, ui: &mut Ui) -> Option<SessionBarAction<K>> {
-        let Self {
-            id_salt,
-            status,
-            status_label,
-            title,
-            subtitle,
-            renamable,
-            chips,
-            buttons,
-            nav,
-            error,
-        } = self;
-        let _ = (
-            ui,
-            id_salt,
-            status,
-            status_label,
-            title,
-            subtitle,
-            renamable,
-            chips,
-            buttons,
-            nav,
-            error,
-        );
-        None
     }
 }
