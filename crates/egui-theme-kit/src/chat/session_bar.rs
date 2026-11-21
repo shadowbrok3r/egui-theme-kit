@@ -81,6 +81,8 @@ pub struct BarButton<'a, K> {
     pub tip: CowStr<'a>,
     pub selected: bool,
     pub badge: Option<u32>,
+    /// Whether the button and its overflow menu row take clicks.
+    pub enabled: bool,
 }
 
 impl<'a, K> BarButton<'a, K> {
@@ -91,6 +93,7 @@ impl<'a, K> BarButton<'a, K> {
             tip: tip.into(),
             selected: false,
             badge: None,
+            enabled: true,
         }
     }
 
@@ -102,6 +105,12 @@ impl<'a, K> BarButton<'a, K> {
     /// A count over the icon's corner; zero draws nothing.
     pub fn badge(mut self, count: u32) -> Self {
         self.badge = Some(count);
+        self
+    }
+
+    /// Draws the button and its overflow menu row greyed out and ignores clicks when `false`.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
         self
     }
 }
@@ -187,6 +196,8 @@ pub struct OptionChip<'a, K> {
     pub icon: Option<Icon>,
     pub tone: Tone,
     pub kind: ChipKind<'a>,
+    /// Whether the action of a [`ChipKind::Meter`] takes clicks; when not, it shows greyed out.
+    pub action_enabled: bool,
 }
 
 impl<'a, K> OptionChip<'a, K> {
@@ -199,6 +210,7 @@ impl<'a, K> OptionChip<'a, K> {
             icon: None,
             tone: Tone::Neutral,
             kind: ChipKind::Info,
+            action_enabled: true,
         }
     }
 
@@ -214,6 +226,12 @@ impl<'a, K> OptionChip<'a, K> {
 
     pub fn kind(mut self, kind: ChipKind<'a>) -> Self {
         self.kind = kind;
+        self
+    }
+
+    /// Shows the meter's action greyed out and ignores it when `false`, in the chip menu and the overflow menu.
+    pub fn action_enabled(mut self, enabled: bool) -> Self {
+        self.action_enabled = enabled;
         self
     }
 }
@@ -235,6 +253,7 @@ pub struct SessionBar<'a, K> {
     id_salt: IdSalt,
     status: SessionStatus,
     status_label: Option<CowStr<'a>>,
+    status_in_subtitle: Option<bool>,
     title: CowStr<'a>,
     subtitle: Option<CowStr<'a>>,
     renamable: bool,
@@ -252,6 +271,7 @@ impl<'a, K: Clone + Hash> SessionBar<'a, K> {
             id_salt: IdSalt::new(id_salt),
             status: SessionStatus::Idle,
             status_label: None,
+            status_in_subtitle: None,
             title: title.into(),
             subtitle: None,
             renamable: false,
@@ -272,6 +292,12 @@ impl<'a, K: Clone + Hash> SessionBar<'a, K> {
 
     pub fn subtitle(mut self, subtitle: impl Into<CowStr<'a>>) -> Self {
         self.subtitle = Some(subtitle.into());
+        self
+    }
+
+    /// In [`BarLayout::Compact`] the subtitle row, shown on a title tap, starts with the status label; on by default on touch screens.
+    pub fn status_in_subtitle(mut self, on: bool) -> Self {
+        self.status_in_subtitle = Some(on);
         self
     }
 

@@ -93,7 +93,7 @@ pub(super) fn bar_button<K>(ui: &mut Ui, id: Id, button: &BarButton<'_, K>, side
         side,
         button.selected,
         &button.tip,
-        true,
+        button.enabled,
     );
     if let Some(count) = button.badge {
         let p = ChatPalette::of(ui);

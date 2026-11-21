@@ -262,12 +262,35 @@ impl SessionStatus {
     }
 }
 
-/// Position among the user's own messages, as `current` of `total`.
+/// Position among the loaded user messages, as `current` of `total`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct MessageNav {
     /// Zero-based index of the message in view, if any.
     pub current: Option<usize>,
     pub total: usize,
+    /// Earlier messages are not loaded: Previous stays enabled at the first, also at `total` zero, and reports [`NavStep::Prev`].
+    pub more_before: bool,
+    /// Later messages are not loaded: Next stays enabled at the last, also at `total` zero, and reports [`NavStep::Next`].
+    pub more_after: bool,
+}
+
+impl MessageNav {
+    /// `current` of `total` with nothing beyond the loaded messages.
+    pub const fn new(current: Option<usize>, total: usize) -> Self {
+        Self {
+            current,
+            total,
+            more_before: false,
+            more_after: false,
+        }
+    }
+
+    /// Marks messages beyond the loaded ones, before and after them.
+    pub const fn more(mut self, before: bool, after: bool) -> Self {
+        self.more_before = before;
+        self.more_after = after;
+        self
+    }
 }
 
 /// A step through the user's own messages.

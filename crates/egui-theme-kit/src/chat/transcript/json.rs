@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use egui::{
-    Id, Label, Rect, Sense, TextFormat, TextStyle, Ui, UiBuilder, style::ScrollAnimation,
-    text::LayoutJob, vec2,
+    Align, Id, Label, Layout, Rect, Sense, TextFormat, TextStyle, Ui, UiBuilder, pos2,
+    style::ScrollAnimation, text::LayoutJob, vec2,
 };
 use egui_json_tree::{
     DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
+    delimiters::ExpandableDelimiter,
     pointer::JsonPointerSegment,
     render::{DefaultRender, RenderContext},
     value::BaseValueType,
@@ -132,6 +133,9 @@ pub struct PayloadTree<'a> {
     role: PayloadRole,
     budget: TreeBudget,
     touch: Option<bool>,
+    word_wrap: bool,
+    block_strings: Option<usize>,
+    counts: bool,
 }
 
 impl<'a> PayloadTree<'a> {
@@ -143,7 +147,28 @@ impl<'a> PayloadTree<'a> {
             role,
             budget: TreeBudget::default(),
             touch: None,
+            word_wrap: true,
+            block_strings: None,
+            counts: false,
         }
+    }
+
+    /// Wraps strings at word boundaries, splitting only runs wider than the row; `false` breaks them anywhere. Defaults to `true`.
+    pub fn word_wrap(mut self, on: bool) -> Self {
+        self.word_wrap = on;
+        self
+    }
+
+    /// Draws a string longer than `chars` characters, or holding a newline, indented on its own line under its key at full width.
+    pub fn block_strings(mut self, chars: usize) -> Self {
+        self.block_strings = Some(chars);
+        self
+    }
+
+    /// Reads a collapsed object or array as `{N}` or `[N]`, its entry count, instead of `{...}`.
+    pub fn counts(mut self, on: bool) -> Self {
+        self.counts = on;
+        self
     }
 
     pub fn budget(mut self, budget: TreeBudget) -> Self {
@@ -164,6 +189,9 @@ impl<'a> PayloadTree<'a> {
             role,
             budget,
             touch,
+            word_wrap,
+            block_strings,
+            counts,
         } = self;
         let mem_id = id.with("egui_theme_kit.chat.payload");
         let mut mem = ui
@@ -238,18 +266,23 @@ impl<'a> PayloadTree<'a> {
                 _ if lazy => DefaultExpand::ToLevel(0),
                 _ => DefaultExpand::ToLevel(role.level()),
             };
-            let visuals = json_visuals(&p);
-            let font = TextStyle::Monospace.resolve(ui.style());
+            let look = Look {
+                visuals: json_visuals(&p),
+                shell: p.shell,
+                font: TextStyle::Monospace.resolve(ui.style()),
+                touch,
+                word_wrap,
+                block_strings,
+                counts,
+            };
             let style = JsonTreeStyle::new()
-                .visuals(visuals.clone())
-                .font_id(font.clone());
-            let shell = p.shell;
+                .visuals(look.visuals.clone())
+                .font_id(look.font.clone());
+            let mut keyed = false;
             let tree = JsonTree::new(id.with("tree"), value)
                 .style(style)
                 .default_expand(default_expand)
-                .on_render(move |ui, ctx| {
-                    render_token(ui, ctx, &visuals, &shell, &font, touch);
-                });
+                .on_render(move |ui, ctx| render_token(ui, ctx, &look, &mut keyed));
             let response = tree.show(ui);
             if repeat {
                 response.reset_expanded(ui);
@@ -297,39 +330,74 @@ fn show_text(ui: &mut Ui, id: Id, value: &Value, p: &ChatPalette) {
     ui.add(Label::new(job).sense(Sense::click()));
 }
 
-/// Draws a tree token: strings wrap and command strings are shell-coloured; on touch every token is click-only.
-fn render_token(
-    ui: &mut Ui,
-    ctx: RenderContext<'_, '_, Value>,
-    visuals: &JsonTreeVisuals,
-    shell: &ShellColors,
-    font: &egui::FontId,
+/// How tree tokens are drawn.
+struct Look {
+    visuals: JsonTreeVisuals,
+    shell: ShellColors,
+    font: egui::FontId,
+    /// Every token is click-only.
     touch: bool,
-) {
-    let job = match &ctx {
+    word_wrap: bool,
+    block_strings: Option<usize>,
+    counts: bool,
+}
+
+impl Look {
+    fn format(&self, color: egui::Color32) -> TextFormat {
+        TextFormat::simple(self.font.clone(), color)
+    }
+
+    /// Whether string `s` drawn after its key moves to its own line.
+    fn blocks(&self, s: &str) -> bool {
+        self.block_strings
+            .is_some_and(|n| s.contains('\n') || s.chars().nth(n).is_some())
+    }
+}
+
+/// Draws a tree token: strings wrap, command strings are shell-coloured, on touch every token is click-only; `keyed` marks a value's key.
+fn render_token(ui: &mut Ui, ctx: RenderContext<'_, '_, Value>, look: &Look, keyed: &mut bool) {
+    let after_key = std::mem::replace(
+        keyed,
+        matches!(&ctx, RenderContext::Property(c) if c.collapsing_state.is_none()),
+    );
+    let visuals = &look.visuals;
+    let (mut job, break_anywhere) = match &ctx {
         RenderContext::BaseValue(c) if c.value_type == BaseValueType::String => {
             let command = matches!(
                 c.pointer.last(),
                 Some(JsonPointerSegment::Key(k)) if is_command_key(k)
             );
             let shown = c.display_value.to_string();
-            let color = visuals.get_color(&c.value_type);
+            let quote = look.format(visuals.get_color(&c.value_type));
             let mut job = LayoutJob::default();
             if command {
-                let quote = TextFormat::simple(font.clone(), color);
                 job.append("\"", 0.0, quote.clone());
-                super::shell::append(&mut job, &shown, font, shell);
+                super::shell::append(&mut job, &shown, &look.font, &look.shell);
                 job.append("\"", 0.0, quote);
             } else {
-                job.append(
-                    &format!("\"{shown}\""),
-                    0.0,
-                    TextFormat::simple(font.clone(), color),
-                );
+                job.append(&format!("\"{shown}\""), 0.0, quote);
             }
-            job
+            if after_key && look.blocks(&shown) {
+                job.wrap.break_anywhere = !look.word_wrap;
+                block_token(ui, job);
+                return;
+            }
+            (job, !look.word_wrap)
         }
-        _ if !touch => {
+        RenderContext::ExpandableDelimiter(c) if look.counts && collapsed(c.delimiter) => {
+            let n = match c.value {
+                Value::Array(items) => items.len(),
+                Value::Object(map) => map.len(),
+                _ => 0,
+            };
+            let text = match c.delimiter {
+                ExpandableDelimiter::CollapsedArray => format!("[{n}]"),
+                _ => format!("{{{n}}}"),
+            };
+            let job = LayoutJob::single_section(text, look.format(visuals.punctuation_color));
+            (job, true)
+        }
+        _ if !look.touch => {
             ctx.render_default(ui);
             return;
         }
@@ -338,22 +406,51 @@ fn render_token(
                 JsonPointerSegment::Index(i) => (i.to_string(), visuals.array_idx_color),
                 JsonPointerSegment::Key(k) => (format!("\"{k}\""), visuals.object_key_color),
             };
-            LayoutJob::single_section(text, TextFormat::simple(font.clone(), color))
+            (LayoutJob::single_section(text, look.format(color)), true)
         }
-        RenderContext::BaseValue(c) => LayoutJob::single_section(
-            c.display_value.to_string(),
-            TextFormat::simple(font.clone(), visuals.get_color(&c.value_type)),
+        RenderContext::BaseValue(c) => (
+            LayoutJob::single_section(
+                c.display_value.to_string(),
+                look.format(visuals.get_color(&c.value_type)),
+            ),
+            true,
         ),
-        RenderContext::ExpandableDelimiter(c) => LayoutJob::single_section(
-            c.delimiter.as_ref().to_owned(),
-            TextFormat::simple(font.clone(), visuals.punctuation_color),
+        RenderContext::ExpandableDelimiter(c) => (
+            LayoutJob::single_section(
+                c.delimiter.as_ref().to_owned(),
+                look.format(visuals.punctuation_color),
+            ),
+            true,
         ),
     };
-    let mut job = job;
     job.wrap.max_width = token_wrap_width(ui);
-    job.wrap.break_anywhere = true;
+    job.wrap.break_anywhere = break_anywhere;
     let galley = ui.fonts_mut(|f| f.layout_job(job));
     ui.add(Label::new(galley).sense(Sense::click()));
+}
+
+/// Whether `delimiter` stands for a collapsed, non-empty object or array.
+fn collapsed(delimiter: ExpandableDelimiter) -> bool {
+    matches!(
+        delimiter,
+        ExpandableDelimiter::CollapsedArray | ExpandableDelimiter::CollapsedObject
+    )
+}
+
+/// Draws `job` under the key that opens the current row, indented one level and as wide as the row.
+fn block_token(ui: &mut Ui, mut job: LayoutJob) {
+    let row = ui.min_rect();
+    let left = ui.max_rect().left() + ui.spacing().indent;
+    let right = ui.max_rect().right().min(ui.clip_rect().right());
+    job.wrap.max_width = (right - left).max(MIN_TOKEN_W);
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let rect = Rect::from_min_size(pos2(left, row.bottom()), galley.size());
+    let builder = UiBuilder::new()
+        .max_rect(rect)
+        .layout(Layout::top_down(Align::Min));
+    ui.scope_builder(builder, |ui| {
+        ui.add(Label::new(galley).sense(Sense::click()));
+    });
 }
 
 /// Stops drags held by labels inside `rect` and scrolls the enclosing scroll area with the finger instead.
@@ -379,11 +476,14 @@ fn scroll_label_drags(ui: &Ui, rect: Rect, scrolling: &mut bool) {
     }
 }
 
+/// Narrowest wrap width of a token.
+const MIN_TOKEN_W: f32 = 48.0;
+
 /// Width left for a token before the visible right edge.
 fn token_wrap_width(ui: &Ui) -> f32 {
     let left = ui.available_rect_before_wrap().left();
     let right = ui.max_rect().right().min(ui.clip_rect().right());
-    (right - left).max(48.0)
+    (right - left).max(MIN_TOKEN_W)
 }
 
 #[cfg(test)]
@@ -443,6 +543,177 @@ mod tests {
                 out.textures_delta.clear();
             }
             assert!(width <= 221.0, "touch {touch}: tree is {width} wide");
+        }
+    }
+
+    /// Every text the tree `setup` builds paints in a column `width` wide, with its galley rect.
+    fn tree_texts(
+        value: &Value,
+        role: PayloadRole,
+        width: f32,
+        touch: bool,
+        setup: impl Fn(PayloadTree<'_>) -> PayloadTree<'_>,
+    ) -> Vec<(String, Rect, Arc<egui::Galley>)> {
+        let ctx = egui::Context::default();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                ui.allocate_ui(egui::vec2(width, 4000.0), |ui| {
+                    let tree = PayloadTree::new(Id::unique("texts"), value, role);
+                    setup(tree.touch(touch)).show(ui);
+                });
+            });
+            out.textures_delta.clear();
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => Some((
+                        t.galley.text().to_owned(),
+                        Rect::from_min_size(t.pos, t.galley.size()),
+                        t.galley.clone(),
+                    )),
+                    _ => None,
+                })
+                .collect();
+        }
+        texts
+    }
+
+    fn find<'t>(
+        texts: &'t [(String, Rect, Arc<egui::Galley>)],
+        text: &str,
+    ) -> &'t (String, Rect, Arc<egui::Galley>) {
+        texts
+            .iter()
+            .find(|(t, ..)| t == text)
+            .unwrap_or_else(|| panic!("{text:?} was not painted"))
+    }
+
+    /// Character offsets where each row of `galley` after the first starts.
+    fn row_starts(galley: &egui::Galley) -> Vec<usize> {
+        let mut at = 0;
+        let mut starts = Vec::new();
+        for row in &galley.rows {
+            if at > 0 {
+                starts.push(at);
+            }
+            at += row.glyphs.len() + usize::from(row.ends_with_newline);
+        }
+        starts
+    }
+
+    #[test]
+    fn strings_wrap_at_words_unless_word_wrap_is_off() {
+        let text = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor";
+        let value = json!({ "k": text });
+        let quoted = format!("\"{text}\"");
+        let chars: Vec<char> = quoted.chars().collect();
+        let at_word = |p: usize| chars[p - 1] == ' ' || chars[p] == ' ';
+        for touch in [false, true] {
+            let words = tree_texts(&value, PayloadRole::Result, 200.0, touch, |t| t);
+            let starts = row_starts(&find(&words, &quoted).2);
+            assert!(starts.len() > 1, "touch {touch}: no wrap");
+            assert!(
+                starts.iter().all(|&p| at_word(p)),
+                "touch {touch}: {starts:?}"
+            );
+
+            let anywhere = tree_texts(&value, PayloadRole::Result, 200.0, touch, |t| {
+                t.word_wrap(false)
+            });
+            let starts = row_starts(&find(&anywhere, &quoted).2);
+            assert!(
+                starts.iter().any(|&p| !at_word(p)),
+                "touch {touch}: {starts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unbroken_run_still_splits_with_word_wrap() {
+        let run = "x".repeat(160);
+        let value = json!({ "k": run });
+        let texts = tree_texts(&value, PayloadRole::Result, 220.0, false, |t| t);
+        let (_, rect, galley) = find(&texts, &format!("\"{run}\""));
+        assert!(galley.rows.len() > 1);
+        assert!(rect.right() <= 221.0, "{rect:?}");
+    }
+
+    #[test]
+    fn block_strings_draw_under_their_key_at_full_width() {
+        let long = "assertion failed: response.rect contains the pointer ".repeat(3);
+        let value = json!({ "message": long, "note": "one\ntwo", "short": "ok" });
+        for touch in [false, true] {
+            let texts = tree_texts(&value, PayloadRole::Result, 320.0, touch, |t| {
+                t.block_strings(40)
+            });
+            let key = |k: &str| find(&texts, &format!("\"{k}\"")).1;
+            let message = find(&texts, &format!("\"{long}\"")).1;
+            assert!(
+                message.top() >= key("message").bottom() - 0.5,
+                "touch {touch}"
+            );
+            assert!(
+                message.left() > key("message").left(),
+                "touch {touch}: not indented"
+            );
+            assert!(
+                message.left() < key("message").right(),
+                "touch {touch}: not under the key"
+            );
+            assert!(
+                message.width() > 320.0 - message.left() - 30.0,
+                "touch {touch}: {message:?}"
+            );
+            assert!(message.right() <= 321.0, "touch {touch}: {message:?}");
+            let note = find(&texts, "\"one\ntwo\"").1;
+            assert!(note.top() >= key("note").bottom() - 0.5, "touch {touch}");
+            assert!(key("note").top() >= message.bottom() - 0.5, "touch {touch}");
+            assert!(key("short").top() >= note.bottom() - 0.5, "touch {touch}");
+            let ok = find(&texts, "\"ok\"").1;
+            assert!(
+                (ok.center().y - key("short").center().y).abs() < 1.0,
+                "touch {touch}"
+            );
+
+            let inline = tree_texts(&value, PayloadRole::Result, 320.0, touch, |t| t);
+            let key = find(&inline, "\"message\"").1;
+            let message = find(&inline, &format!("\"{long}\"")).1;
+            assert!(message.left() >= key.right(), "touch {touch}: {message:?}");
+        }
+    }
+
+    #[test]
+    fn counts_label_collapsed_objects_and_arrays() {
+        let value = json!({ "a": { "x": 1, "y": 2 }, "b": [1, 2, 3], "c": {}, "d": [] });
+        for touch in [false, true] {
+            let shown = |counts: bool| {
+                tree_texts(&value, PayloadRole::Depth(0), 400.0, touch, |t| {
+                    t.counts(counts)
+                })
+                .into_iter()
+                .map(|(t, ..)| t)
+                .collect::<Vec<_>>()
+            };
+            let counted = shown(true);
+            for text in ["{2}", "[3]", "{}", "[]"] {
+                assert!(
+                    counted.iter().any(|t| t == text),
+                    "touch {touch}: {text} in {counted:?}"
+                );
+            }
+            assert!(
+                !counted.iter().any(|t| t.contains("...")),
+                "touch {touch}: {counted:?}"
+            );
+            let plain = shown(false);
+            for text in ["{...}", "[...]"] {
+                assert!(
+                    plain.iter().any(|t| t == text),
+                    "touch {touch}: {text} in {plain:?}"
+                );
+            }
         }
     }
 

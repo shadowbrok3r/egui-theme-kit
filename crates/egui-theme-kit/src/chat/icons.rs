@@ -65,7 +65,7 @@ impl Default for ChatIcons {
             error: icons::ERROR,
             check: icons::CHECK,
             close: icons::X,
-            more: icons::MENU,
+            more: icons::DOTS,
         }
     }
 }

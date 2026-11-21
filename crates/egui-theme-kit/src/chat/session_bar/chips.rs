@@ -11,7 +11,7 @@ use crate::chat::palette::{ChatPalette, MIN_TEXT_CONTRAST, legible};
 use crate::chat::surface::{SurfaceKind, paint_surface};
 use crate::chat::types::Tone;
 use crate::controls::{
-    MenuItem, State, focus_ring, kit, medium_font, menu_check_item, menu_item, popup_menu,
+    MenuItem, State, fill_width, focus_ring, kit, medium_font, menu_check_item, popup_menu,
     state_of, text_galley, whole,
 };
 
@@ -24,6 +24,8 @@ const METER_W: f32 = 28.0;
 const METER_H: f32 = 4.0;
 /// Opacity of the hover wash over a chip.
 const HOVER_WASH: f32 = 0.6;
+/// Width of the meter in a menu row.
+pub(super) const MENU_METER_W: f32 = 48.0;
 
 /// Laid-out parts of one chip.
 struct Parts {
@@ -157,9 +159,14 @@ pub(super) fn show_chip<K: Clone>(
         ChipKind::Meter {
             action: Some(label),
             ..
-        } => popup_menu(&response, false, |ui| menu_item(ui, None, label).clicked())
-            .filter(|clicked| *clicked)
-            .map(|_| SessionBarAction::ChipAction(chip.id.clone())),
+        } => popup_menu(&response, false, |ui| {
+            MenuItem::new(label)
+                .enabled(chip.action_enabled)
+                .show(ui)
+                .clicked()
+        })
+        .filter(|clicked| *clicked)
+        .map(|_| SessionBarAction::ChipAction(chip.id.clone())),
         ChipKind::Toggle { on } => response.clicked().then(|| SessionBarAction::ChipToggle {
             id: chip.id.clone(),
             on: !on,
@@ -262,10 +269,12 @@ pub(super) fn chip_menu<K: Clone>(
                 id: chip.id.clone(),
                 choice,
             }),
-        ChipKind::Meter { action, .. } => {
-            let _ = row.enabled(false).show(ui);
+        ChipKind::Meter { fraction, action } => {
+            meter_row(ui, chip, &text, *fraction);
             let label = action.as_deref()?;
-            menu_item(ui, None, label)
+            MenuItem::new(label)
+                .enabled(chip.action_enabled)
+                .show(ui)
                 .clicked()
                 .then(|| SessionBarAction::ChipAction(chip.id.clone()))
         }
@@ -282,5 +291,46 @@ pub(super) fn chip_menu<K: Clone>(
             let _ = row.enabled(false).show(ui);
             None
         }
+    }
+}
+
+/// A read-only menu row of a meter chip: icon, caption and the meter at the trailing edge.
+fn meter_row<K>(ui: &mut Ui, chip: &OptionChip<'_, K>, text: &str, fraction: f32) {
+    let (t, m) = kit(ui);
+    let p = ChatPalette::of(ui);
+    let galley = text_galley(ui, text, TextStyle::Button.resolve(ui.style()));
+    let lead = m.pad.x + m.icon_md + m.gap.x;
+    let min_w = lead + galley.size().x + m.gap.x + MENU_METER_W + m.pad.x;
+    let size = vec2(fill_width(ui).max(min_w), m.row_h);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(Role::ProgressIndicator, true, text));
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let cy = rect.center().y;
+    if let Some(icon) = chip.icon {
+        let slot = Rect::from_center_size(
+            pos2(rect.left() + m.pad.x + m.icon_md / 2.0, cy),
+            Vec2::splat(m.icon_md),
+        );
+        icon.paint(ui, slot, m.icon_md, t.text_dim);
+    }
+    let y = (cy - galley.size().y / 2.0).round();
+    ui.painter()
+        .galley(pos2(rect.left() + lead, y), galley, t.text_dim);
+    let track = Rect::from_min_size(
+        pos2(
+            rect.right() - m.pad.x - MENU_METER_W,
+            (cy - METER_H / 2.0).round(),
+        ),
+        vec2(MENU_METER_W, METER_H),
+    );
+    ui.painter()
+        .rect_filled(track, METER_H / 2.0, p.chip_stroke);
+    let fraction = fraction.clamp(0.0, 1.0);
+    if fraction > 0.0 {
+        let (_, ink) = tone_ink(chip.tone, &p);
+        let fill = Rect::from_min_size(track.min, vec2(MENU_METER_W * fraction, METER_H));
+        ui.painter().rect_filled(fill, METER_H / 2.0, ink);
     }
 }
