@@ -226,16 +226,34 @@ static APPROVE: [CardChoice<'static>; 3] = [
         label: Cow::Borrowed("Approve"),
         kind: ButtonKind::Primary,
         shortcut: Some(Cow::Borrowed("Y")),
+        while_locked: false,
     },
     CardChoice {
         label: Cow::Borrowed("Always for this command"),
         kind: ButtonKind::Neutral,
         shortcut: None,
+        while_locked: false,
     },
     CardChoice {
         label: Cow::Borrowed("Deny"),
         kind: ButtonKind::Danger,
         shortcut: Some(Cow::Borrowed("N")),
+        while_locked: false,
+    },
+];
+
+static LOCKED: [CardChoice<'static>; 2] = [
+    CardChoice {
+        label: Cow::Borrowed("Run"),
+        kind: ButtonKind::Primary,
+        shortcut: Some(Cow::Borrowed("Y")),
+        while_locked: false,
+    },
+    CardChoice {
+        label: Cow::Borrowed("Dismiss"),
+        kind: ButtonKind::Ghost,
+        shortcut: None,
+        while_locked: true,
     },
 ];
 
@@ -1049,16 +1067,30 @@ impl ChatDemo {
 
     fn board(&mut self, ui: &mut Ui) {
         let mine = self.waiting_cards();
-        let other = [ChatEntry::Approval(ApprovalCard {
-            key: text("ap-other"),
-            context: text("LAB-02 \u{b7} docs"),
-            title: text("Edit a file"),
-            command: None,
-            detail: json(json!({ "path": "docs/CHANGELOG.md", "lines_added": 14 })),
-            reason: Some(text("Adds the 0.2 entry")),
-            choices: CowList::Borrowed(&APPROVE),
-            state: CardState::Open,
-        })];
+        let other = [
+            ChatEntry::Approval(ApprovalCard {
+                key: text("ap-other"),
+                context: text("LAB-02 \u{b7} docs"),
+                title: text("Edit a file"),
+                command: None,
+                detail: json(json!({ "path": "docs/CHANGELOG.md", "lines_added": 14 })),
+                reason: Some(text("Adds the 0.2 entry")),
+                choices: CowList::Borrowed(&APPROVE),
+                state: CardState::Open,
+            }),
+            ChatEntry::Approval(ApprovalCard {
+                key: text("ap-locked"),
+                context: text("LAB-02 \u{b7} release"),
+                title: text("Publish the crate"),
+                command: Some(text("cargo publish -p egui-theme-kit")),
+                detail: None,
+                reason: None,
+                choices: CowList::Borrowed(&LOCKED),
+                state: CardState::Locked {
+                    reason: text("Only the release owner can run this"),
+                },
+            }),
+        ];
         let s = session(self.selected);
         let groups = [
             BoardGroup {

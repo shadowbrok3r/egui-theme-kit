@@ -2,7 +2,7 @@
 
 use egui::{
     AsIdSalt, CornerRadius, CursorIcon, Id, InnerResponse, Key, KeyboardShortcut, Margin,
-    Modifiers, Rect, ScrollArea, Sense, Shape, Ui, Vec2, vec2,
+    Modifiers, Rect, Response, ScrollArea, Sense, Shape, Ui, Vec2, vec2,
 };
 
 use super::entry::{ChatEntry, Payload};
@@ -40,12 +40,14 @@ pub struct ApprovalCard<'a> {
 }
 
 /// One button of an approval card.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CardChoice<'a> {
     pub label: CowStr<'a>,
     pub kind: ButtonKind,
     /// Keys written as `Y` or `Ctrl+Enter`, drawn as keycaps; pressing them chooses while the pointer is over the card and no text field has focus.
     pub shortcut: Option<CowStr<'a>>,
+    /// Stays usable while the card is [`CardState::Locked`], such as a dismiss choice.
+    pub while_locked: bool,
 }
 
 /// The shortcut written as `Y` or `Ctrl+Enter`; `None` when a part is unknown.
@@ -67,16 +69,22 @@ fn parse_shortcut(text: &str) -> Option<KeyboardShortcut> {
     Some(KeyboardShortcut::new(modifiers, key?))
 }
 
-/// The choice whose shortcut was pressed while the pointer is over `rect` and no text field has focus.
-fn pressed_choice(ui: &Ui, rect: Rect, choices: &[CardChoice<'_>]) -> Option<usize> {
+/// The usable choice whose shortcut was pressed while the pointer is over `rect` and no text field has focus.
+fn pressed_choice(
+    ui: &Ui,
+    rect: Rect,
+    choices: &[CardChoice<'_>],
+    usable: impl Fn(&CardChoice<'_>) -> bool,
+) -> Option<usize> {
     if ui.ctx().egui_wants_keyboard_input() || !ui.rect_contains_pointer(rect) {
         return None;
     }
     choices.iter().position(|c| {
-        c.shortcut
-            .as_deref()
-            .and_then(parse_shortcut)
-            .is_some_and(|s| ui.input_mut(|i| i.consume_shortcut(&s)))
+        usable(c)
+            && c.shortcut
+                .as_deref()
+                .and_then(parse_shortcut)
+                .is_some_and(|s| ui.input_mut(|i| i.consume_shortcut(&s)))
     })
 }
 
@@ -91,7 +99,7 @@ pub enum CardState<'a> {
         tone: Tone,
     },
     Failed(CowStr<'a>),
-    /// Visible but not actionable by this user.
+    /// Visible but not actionable by this user; choices draw disabled with `reason` as their tooltip, except [`CardChoice::while_locked`] ones.
     Locked {
         reason: CowStr<'a>,
     },
@@ -101,6 +109,22 @@ impl CardState<'_> {
     /// Whether the user can still act on the card.
     pub fn actionable(&self) -> bool {
         matches!(self, Self::Open | Self::Failed(_))
+    }
+
+    /// The reason of a locked card.
+    fn lock_reason(&self) -> Option<&str> {
+        match self {
+            Self::Locked { reason } => Some(reason),
+            _ => None,
+        }
+    }
+}
+
+/// Shows the lock reason as the tooltip of a disabled button.
+fn lock_tip(response: Response, locked: Option<&str>) -> Response {
+    match locked {
+        Some(reason) => response.on_disabled_hover_text(reason),
+        None => response,
     }
 }
 
@@ -462,13 +486,16 @@ pub(crate) fn approval(
             }
             let usable = state_line(ui, rc, &card.state);
             let busy = matches!(card.state, CardState::Busy);
-            if usable || busy {
+            let locked = card.state.lock_reason();
+            if usable || busy || locked.is_some() {
                 ui.horizontal_wrapped(|ui| {
                     for (n, choice) in card.choices.iter().enumerate() {
+                        let enabled = usable || (locked.is_some() && choice.while_locked);
                         let button = TextButton::new(&choice.label)
                             .kind(choice.kind)
-                            .enabled(usable)
+                            .enabled(enabled)
                             .show(ui);
+                        let button = lock_tip(button, locked);
                         if let Some(keys) = &choice.shortcut {
                             Kbd::new(keys).show(ui);
                         }
@@ -483,9 +510,13 @@ pub(crate) fn approval(
             }
         },
     );
+    let open = card.state.actionable();
+    let locked = card.state.lock_reason().is_some();
     if action.is_none()
-        && card.state.actionable()
-        && let Some(n) = pressed_choice(ui, shown.response.rect, &card.choices)
+        && (open || locked)
+        && let Some(n) = pressed_choice(ui, shown.response.rect, &card.choices, |c| {
+            open || c.while_locked
+        })
     {
         action = Some(CardAction::Choose(n));
     }
@@ -537,7 +568,8 @@ pub(crate) fn question(
             }
             let usable = state_line(ui, rc, &card.state) && usable;
             let busy = matches!(card.state, CardState::Busy);
-            if !(usable || busy) {
+            let locked = card.state.lock_reason();
+            if !(usable || busy || locked.is_some()) {
                 return;
             }
             ui.horizontal_wrapped(|ui| {
@@ -550,6 +582,7 @@ pub(crate) fn question(
                             ButtonKind::Neutral
                         };
                         let button = TextButton::new(&label).kind(kind).enabled(usable).show(ui);
+                        let button = lock_tip(button, locked);
                         if rc.tapped(&button) {
                             let note = drafts.drafts[0].note.trim();
                             action = Some(CardAction::Answer(vec![Answer {
@@ -566,6 +599,7 @@ pub(crate) fn question(
                         .icon(rc.icons.send)
                         .enabled(usable && ready.is_some())
                         .show(ui);
+                    let send = lock_tip(send, locked);
                     if rc.tapped(&send)
                         && let Some(ready) = ready
                     {
@@ -577,6 +611,7 @@ pub(crate) fn question(
                     .enabled(usable)
                     .show(ui)
                     .on_hover_text("Carry on without an answer");
+                let skip = lock_tip(skip, locked);
                 if rc.tapped(&skip) {
                     action = Some(CardAction::Dismiss);
                 }
@@ -1082,11 +1117,13 @@ mod tests {
                 label: Cow::Borrowed("Approve"),
                 kind: ButtonKind::Primary,
                 shortcut: Some(Cow::Borrowed("Y")),
+                while_locked: false,
             },
             CardChoice {
                 label: Cow::Borrowed("Deny"),
                 kind: ButtonKind::Danger,
                 shortcut: Some(Cow::Borrowed("N")),
+                while_locked: false,
             },
         ];
         let card = ApprovalCard {
