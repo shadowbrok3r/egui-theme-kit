@@ -1,6 +1,6 @@
 //! Touch handling for the composer text: drag to scroll, hold to select, cursor tracking and the text action row.
 
-use egui::{Context, Pos2, Rect};
+use egui::{Context, Event, Pos2, Rect, TouchPhase};
 
 /// Seconds a still press takes to become a hold.
 pub(super) const HOLD_SECS: f64 = 0.35;
@@ -40,6 +40,8 @@ pub(super) enum Gesture {
         origin: Pos2,
         start: f64,
         before: Option<(usize, usize)>,
+        /// Pressed during a coast: lifting in place only stops it.
+        catch: bool,
     },
     /// Moved before the hold: the text scrolls with the finger.
     Scrolling,
@@ -60,7 +62,7 @@ pub(super) struct TouchState {
     pub last_tap: Option<(f64, Pos2)>,
     /// The last primary press came from a finger.
     pub finger: bool,
-    /// Finger speed down the screen, in points per second, while scrolling or coasting.
+    /// Coast speed down the screen, in points per second.
     pub velocity: f32,
     /// The text coasts after a scroll lifted.
     pub coasting: bool,
@@ -150,7 +152,7 @@ pub(super) fn advance(
     forced: bool,
     cursor: Option<(usize, usize)>,
 ) -> Step {
-    let (pressed, finger, down, pos, delta, time, dt) = ctx.input(|i| {
+    let (pressed, finger, down, pos, delta, fling, cancel, time, dt) = ctx.input(|i| {
         (
             i.pointer
                 .primary_pressed()
@@ -160,6 +162,16 @@ pub(super) fn advance(
             i.pointer.primary_down(),
             i.pointer.latest_pos(),
             i.pointer.delta(),
+            i.pointer.velocity().y,
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    Event::Touch {
+                        phase: TouchPhase::Cancel,
+                        ..
+                    }
+                )
+            }),
             i.time,
             i.stable_dt.max(f32::EPSILON),
         )
@@ -172,6 +184,7 @@ pub(super) fn advance(
     });
     if let Some(origin) = pressed {
         touch.finger = finger;
+        let catch = touch.coasting;
         touch.coasting = false;
         touch.velocity = 0.0;
         let follows_tap = touch.last_tap.take().is_some_and(|(t, p)| {
@@ -187,18 +200,23 @@ pub(super) fn advance(
                 origin,
                 start: time,
                 before: cursor,
+                catch,
             },
         };
     }
     let mut step = Step::default();
-    let Some(pos) = pos.filter(|_| down) else {
+    // A touch cancel drops the pointer without a release.
+    let cancelled = cancel || (down && pos.is_none());
+    let Some(pos) = pos.filter(|_| down && !cancelled) else {
         match touch.gesture {
+            Gesture::Pressed { before, catch, .. } if catch || cancelled => step.keep = before,
             Gesture::Pressed { origin, .. } => {
                 touch.last_tap = Some((time, origin));
                 step.tap = Some(origin);
             }
-            Gesture::Scrolling => {
-                touch.coasting = focused && touch.velocity.abs() >= COAST_STOP;
+            Gesture::Scrolling if !cancelled => {
+                touch.velocity = fling;
+                touch.coasting = focused && fling.abs() >= COAST_STOP;
             }
             _ => {}
         }
@@ -214,13 +232,13 @@ pub(super) fn advance(
             origin,
             start,
             before,
+            ..
         } => {
             let moved = origin.distance(pos) > slop;
             let held = time - start >= HOLD_SECS;
             if moved && !held {
                 touch.gesture = Gesture::Scrolling;
                 step.scroll_by = pos.y - origin.y;
-                touch.velocity = step.scroll_by / dt;
                 step.keep = before;
             } else if held {
                 touch.gesture = Gesture::Holding { origin, word: None };
@@ -230,10 +248,7 @@ pub(super) fn advance(
                 ctx.request_repaint_after_secs((start + HOLD_SECS - time) as f32);
             }
         }
-        Gesture::Scrolling => {
-            step.scroll_by = delta.y;
-            touch.velocity = (touch.velocity + delta.y / dt) / 2.0;
-        }
+        Gesture::Scrolling => step.scroll_by = delta.y,
         Gesture::Holding { .. } => step.extend = Some(pos),
         Gesture::Idle | Gesture::Selecting => {}
     }
