@@ -13,6 +13,7 @@ use crate::chat::types::ChatAction;
 pub struct ChatText<'a> {
     id_salt: IdSalt,
     mentions: Option<&'a dyn MentionSource>,
+    touch: Option<bool>,
 }
 
 impl<'a> ChatText<'a> {
@@ -20,6 +21,7 @@ impl<'a> ChatText<'a> {
         Self {
             id_salt: IdSalt::new(id_salt),
             mentions: None,
+            touch: None,
         }
     }
 
@@ -29,10 +31,20 @@ impl<'a> ChatText<'a> {
         self
     }
 
+    /// Forces click-only tree tokens and unselectable text on or off; defaults to whether the screen is touched.
+    pub fn touch(mut self, touch: bool) -> Self {
+        self.touch = Some(touch);
+        self
+    }
+
     fn run(self, ui: &mut Ui, draw: impl FnOnce(&mut Ui, &mut RowCx<'_>, Id)) -> Vec<ChatAction> {
         let id = ui.make_persistent_id(self.id_salt);
         let mut rc = RowCx::new(ui, id);
         rc.mentions = self.mentions;
+        if let Some(touch) = self.touch {
+            rc.touch = touch;
+            rc.selectable = ui.style().interaction.selectable_labels && !touch;
+        }
         draw(ui, &mut rc, id);
         rc.actions
     }
@@ -108,5 +120,83 @@ mod tests {
                 "{needle} missing: {texts:?}"
             );
         }
+    }
+
+    #[test]
+    fn touch_forces_the_row_context_either_way() {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let selectable = ui.style().interaction.selectable_labels;
+            let mut seen = Vec::new();
+            for touch in [None, Some(true), Some(false)] {
+                let mut text = ChatText::new(("touch", touch));
+                if let Some(touch) = touch {
+                    text = text.touch(touch);
+                }
+                let _ = text.run(ui, |_, rc, _| seen.push((rc.touch, rc.selectable)));
+            }
+            assert_eq!(
+                seen,
+                [(false, selectable), (true, false), (false, selectable)]
+            );
+        });
+        out.textures_delta.clear();
+    }
+
+    /// Senses of every widget `draw` adds in its second frame on `ctx`.
+    fn senses(ctx: &egui::Context, mut draw: impl FnMut(&mut Ui)) -> Vec<egui::Sense> {
+        let mut senses = Vec::new();
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(Default::default(), &mut draw);
+            out.textures_delta.clear();
+            senses = ctx.viewport(|v| {
+                v.this_pass
+                    .widgets
+                    .layers()
+                    .flat_map(|(_, w)| w.iter().map(|w| w.sense))
+                    .collect()
+            });
+        }
+        senses
+    }
+
+    #[test]
+    fn touch_text_is_not_selectable() {
+        let ctx = egui::Context::default();
+        let drags = |touch: bool| {
+            senses(&ctx, |ui| {
+                let text = ChatText::new(("md", touch)).touch(touch);
+                let _ = text.markdown(ui, "plain words and more words");
+            })
+            .iter()
+            .any(|s| s.senses_drag())
+        };
+        assert!(drags(false));
+        assert!(!drags(true));
+    }
+
+    #[cfg(feature = "chat-json")]
+    #[test]
+    fn a_touch_payload_draws_click_only_tree_tokens() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|s| s.interaction.selectable_labels = false);
+        let json = Payload::Text(Cow::Borrowed("{\"key\": [1, 2]}"));
+        let drags = |touch: bool| {
+            senses(&ctx, |ui| {
+                let _ = ChatText::new(("payload", touch))
+                    .touch(touch)
+                    .payload(ui, &json);
+            })
+            .iter()
+            .filter(|s| s.senses_drag())
+            .count()
+        };
+        // Spacing delimiters sense drags in both modes.
+        assert!(
+            drags(true) < drags(false),
+            "{} {}",
+            drags(true),
+            drags(false)
+        );
     }
 }
