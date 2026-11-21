@@ -1012,6 +1012,17 @@ pub fn floating_cards(
     id_salt: impl AsIdSalt,
     cards: &[ChatEntry<'_>],
 ) -> Vec<(String, CardAction)> {
+    let max_h = ui.ctx().content_rect().height() * FLOATING_SHARE;
+    floating_cards_within(ui, id_salt, cards, max_h)
+}
+
+/// [`floating_cards`] scrolling the card past `max_height` points.
+pub fn floating_cards_within(
+    ui: &mut Ui,
+    id_salt: impl AsIdSalt,
+    cards: &[ChatEntry<'_>],
+    max_height: f32,
+) -> Vec<(String, CardAction)> {
     let shown: Vec<&ChatEntry<'_>> = cards.iter().filter(|e| floats(e)).collect();
     let mut out = Vec::new();
     if shown.is_empty() {
@@ -1047,11 +1058,10 @@ pub fn floating_cards(
             }
         });
     }
-    let max_h = ui.ctx().content_rect().height() * FLOATING_SHARE;
     let entry = shown[page];
     ScrollArea::vertical()
         .id_salt(id.with(("scroll", entry.key())))
-        .max_height(max_h)
+        .max_height(max_height.max(0.0))
         .auto_shrink([false, true])
         .show(ui, |ui| {
             if let Some(action) = entry_card(ui, &mut rc, entry, id) {

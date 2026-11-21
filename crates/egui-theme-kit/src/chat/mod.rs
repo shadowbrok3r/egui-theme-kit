@@ -42,8 +42,8 @@ pub use transcript::{
     Jump, LoadState, Notice, Payload, PlanCard, PlanStatus, PlanStep, Question, QuestionCard,
     QuestionForm, QuestionItem, Run, SHORT_COMMAND, SHOW_COMMAND, Transcript, TranscriptOptions,
     TranscriptResponse, TranscriptSource, TranscriptState, UserMessage, WaitingBoard, WorkItem,
-    WorkKind, WorkStats, WorkStatus, floating_cards, is_command_key, plan_progress, runs,
-    work_summary,
+    WorkKind, WorkStats, WorkStatus, floating_cards, floating_cards_within, is_command_key,
+    plan_progress, runs, work_summary,
 };
 #[cfg(feature = "chat-json")]
 pub use transcript::{

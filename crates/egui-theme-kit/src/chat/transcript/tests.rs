@@ -1496,3 +1496,25 @@ fn board_cards_cut_their_command_and_show_it_whole_on_request() {
     assert_eq!(text_rect(&shapes, &command).len(), 1);
     assert!(!text_rect(&shapes, "Approve").is_empty());
 }
+
+#[test]
+fn floating_cards_within_scroll_past_the_given_height() {
+    let ctx = Context::default();
+    let command = (1..=40)
+        .map(|n| format!("echo {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cards = [ChatEntry::Approval(approve_card("ap-cap", command))];
+    let mut height = 0.0;
+    for _ in 0..2 {
+        let mut out = ctx.run_ui(input(), |ui| {
+            height = ui
+                .scope(|ui| floating_cards_within(ui, "cap", &cards, 120.0))
+                .response
+                .rect
+                .height();
+        });
+        out.textures_delta.clear();
+    }
+    assert!(height <= 121.0, "{height}");
+}
