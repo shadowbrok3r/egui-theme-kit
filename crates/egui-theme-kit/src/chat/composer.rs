@@ -605,6 +605,7 @@ impl<'a> Composer<'a> {
         }
 
         update_popup(&ctx, text_id, state, editable, slash, mentions);
+        let menu_open = state.plus.is_open();
         plus::show(
             &ctx,
             text_id,
@@ -621,6 +622,10 @@ impl<'a> Composer<'a> {
         );
         if state.refocus && !state.plus.is_open() {
             state.refocus = false;
+            state.refocus_again = menu_open;
+            state.touch.regain = true;
+            ctx.memory_mut(|mem| mem.request_focus(text_id));
+        } else if std::mem::take(&mut state.refocus_again) {
             state.touch.regain = true;
             ctx.memory_mut(|mem| mem.request_focus(text_id));
         }
@@ -1025,7 +1030,8 @@ fn update_popup(
     slash: Option<&dyn SlashSource>,
     mentions: Option<&dyn MentionSource>,
 ) {
-    let focused = editable && (ctx.memory(|mem| mem.has_focus(id)) || state.refocus);
+    let focused =
+        editable && (ctx.memory(|mem| mem.has_focus(id)) || state.refocus || state.refocus_again);
     let cursor = cursor_of(ctx, id)
         .filter(|(a, b)| a == b)
         .map(|(_, b)| b)

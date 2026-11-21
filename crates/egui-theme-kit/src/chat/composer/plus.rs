@@ -1,6 +1,6 @@
 //! The `+` menu: attach, mention, app entries and slash commands in a kit command palette.
 
-use egui::{Context, Id};
+use egui::{Context, Id, Key};
 
 use super::popup::SlashPick;
 use super::slash::{PlusItem, SlashCommand, SlashSource};
@@ -92,11 +92,16 @@ pub(super) fn show(
     let icons = ChatIcons::get(ctx);
     let commands = listed(menu.slash, menu.editable);
     let list = rows(&menu, &commands, &icons);
+    let back = ctx.input(|i| i.key_pressed(Key::BrowserBack));
     let picked = CommandPalette::new()
         .id_salt(menu.id)
         .hint("Search commands")
         .show(ctx, &mut state.plus, &list);
     let Some(pick) = picked else {
+        // Back closes the menu without refocusing the text.
+        if back && !state.plus.is_open() {
+            state.refocus = false;
+        }
         return;
     };
     state.plus.close();

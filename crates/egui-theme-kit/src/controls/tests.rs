@@ -1548,6 +1548,50 @@ fn typing_filters_the_palette_and_escape_closes_it() {
 }
 
 #[test]
+fn the_palette_focuses_its_query_on_open_and_leaves_a_surrendered_focus_alone() {
+    let ctx = context(Density::Regular);
+    let items = palette_items();
+    let query = CommandPalette::new().query_id();
+    let focused = || ctx.memory(|m| m.has_focus(query));
+    let mut state = CommandPaletteState::new();
+    state.open();
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    assert!(focused(), "opening focuses the query");
+    ctx.memory_mut(|m| m.surrender_focus(query));
+    for _ in 0..3 {
+        palette_frame(&ctx, &mut state, &items, Vec::new());
+    }
+    assert!(!focused(), "a surrendered query stays unfocused");
+    assert!(state.is_open());
+    state.close();
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    state.open = true;
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    assert!(focused(), "reopening focuses the query again");
+}
+
+#[test]
+fn back_closes_the_palette_like_escape() {
+    let ctx = context(Density::Regular);
+    let items = palette_items();
+    let query = CommandPalette::new().query_id();
+    let mut state = CommandPaletteState::new();
+    state.open();
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, vec![Event::Text("sett".into())]);
+    ctx.memory_mut(|m| m.surrender_focus(query));
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    let picked = palette_frame(&ctx, &mut state, &items, vec![key(egui::Key::BrowserBack)]);
+    assert_eq!(picked, None);
+    assert!(!state.is_open(), "back closes the palette");
+    assert!(state.query.is_empty());
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    assert!(!ctx.memory(|m| m.has_focus(query)));
+}
+
+#[test]
 fn the_palette_fits_a_phone_screen() {
     let ctx = context(Density::Regular);
     let items = palette_items();
