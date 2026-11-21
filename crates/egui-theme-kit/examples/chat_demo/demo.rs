@@ -602,6 +602,8 @@ fn entries(now: UnixMs) -> Vec<ChatEntry<'static>> {
             command: Some(text(
                 "cargo test -p egui-theme-kit --features chat transcript:: -- --test-threads 1",
             )),
+            copy_text: None,
+            command_max_lines: None,
             detail: json(json!({
                 "cwd": "E:/work/kit-chat",
                 "timeout_s": 600,
@@ -1073,6 +1075,8 @@ impl ChatDemo {
                 context: text("LAB-02 \u{b7} docs"),
                 title: text("Edit a file"),
                 command: None,
+                copy_text: None,
+                command_max_lines: None,
                 detail: json(json!({ "path": "docs/CHANGELOG.md", "lines_added": 14 })),
                 reason: Some(text("Adds the 0.2 entry")),
                 choices: CowList::Borrowed(&APPROVE),
@@ -1083,6 +1087,8 @@ impl ChatDemo {
                 context: text("LAB-02 \u{b7} release"),
                 title: text("Publish the crate"),
                 command: Some(text("cargo publish -p egui-theme-kit")),
+                copy_text: None,
+                command_max_lines: None,
                 detail: None,
                 reason: None,
                 choices: CowList::Borrowed(&LOCKED),

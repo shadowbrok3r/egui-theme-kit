@@ -24,15 +24,23 @@ pub const CONFIRM_YES: &str = "yes";
 pub const CONFIRM_NO: &str = "no";
 /// Share of the screen height floating cards may cover.
 const FLOATING_SHARE: f32 = 0.45;
+/// Label of the toggle that shows a cut command whole.
+pub const SHOW_COMMAND: &str = "Show the whole command";
+/// Label of the toggle that cuts a whole command back to [`ApprovalCard::command_max_lines`].
+pub const SHORT_COMMAND: &str = "Show less";
 
 /// A request to approve a command or change.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ApprovalCard<'a> {
     pub key: CowStr<'a>,
     /// Where the request comes from, such as `SN 2156701 · HOST` or `desk · ~/src/engine`.
     pub context: CowStr<'a>,
     pub title: CowStr<'a>,
     pub command: Option<CowStr<'a>>,
+    /// Text the command's copy button copies in place of `command`, such as the whole command behind a cut preview.
+    pub copy_text: Option<CowStr<'a>>,
+    /// Most command lines shown; a longer command is cut with a toggle that shows it whole.
+    pub command_max_lines: Option<usize>,
     pub detail: Option<Payload<'a>>,
     pub reason: Option<CowStr<'a>>,
     pub choices: CowList<'a, CardChoice<'a>>,
@@ -443,6 +451,51 @@ fn status(ui: &mut Ui, rc: &RowCx<'_>, icon: Icon, color: egui::Color32, text: &
     });
 }
 
+/// `command` cut to `max` lines, the last saying how many were left out; `None` when it fits.
+pub(crate) fn cut_command(command: &str, max: usize) -> Option<String> {
+    let total = command.lines().count();
+    if total <= max {
+        return None;
+    }
+    let keep = max.saturating_sub(1).max(1);
+    let mut out: Vec<&str> = command.lines().take(keep).collect();
+    let note = match total - keep {
+        1 => "… 1 more line".to_owned(),
+        n => format!("… {n} more lines"),
+    };
+    out.push(&note);
+    Some(out.join(
+        "
+",
+    ))
+}
+
+/// The command of `card` with its copy text, cut to its line cap unless shown whole, and its toggle.
+fn approval_command(ui: &mut Ui, rc: &mut RowCx<'_>, card: &ApprovalCard<'_>, view: Id) {
+    let Some(command) = &card.command else {
+        return;
+    };
+    let key = card.key.as_ref();
+    let whole_id = view.with((key, "command_whole"));
+    let whole = ui.data(|d| d.get_temp::<bool>(whole_id)).unwrap_or(false);
+    let cut = card
+        .command_max_lines
+        .and_then(|max| cut_command(command, max));
+    let shown = match (&cut, whole) {
+        (Some(cut), false) => cut.as_str(),
+        _ => command.as_ref(),
+    };
+    let copy = card.copy_text.as_deref().unwrap_or(command);
+    markdown::code_block_copying(ui, rc, "shell", shown, copy, view.with((key, "command")));
+    if cut.is_some() {
+        let label = if whole { SHORT_COMMAND } else { SHOW_COMMAND };
+        let toggle = TextButton::new(label).kind(ButtonKind::Ghost).show(ui);
+        if rc.tapped(&toggle) {
+            ui.data_mut(|d| d.insert_temp(whole_id, !whole));
+        }
+    }
+}
+
 /// Draws an approval card; `view` keys its payload trees.
 pub(crate) fn approval(
     ui: &mut Ui,
@@ -467,9 +520,7 @@ pub(crate) fn approval(
         |ui, rc| {
             let title_font = rc.f.strong.clone();
             plain(ui, rc, &card.title, &title_font, rc.p.card_text);
-            if let Some(command) = &card.command {
-                markdown::code_block(ui, rc, "shell", command, view.with((key, "command")));
-            }
+            approval_command(ui, rc, card, view);
             if let Some(detail) = &card.detail {
                 payload::show(
                     ui,
@@ -928,19 +979,23 @@ fn step_row(ui: &mut Ui, rc: &RowCx<'_>, step: &PlanStep<'_>) {
     });
 }
 
-/// Draws the card `entry` holds, if it is one; returns the user's action.
+/// Draws the card `entry` holds, if it is one, scoped by its key; returns the user's action.
 pub(crate) fn entry_card(
     ui: &mut Ui,
     rc: &mut RowCx<'_>,
     entry: &ChatEntry<'_>,
     view: Id,
 ) -> Option<CardAction> {
-    match entry {
-        ChatEntry::Approval(card) => approval(ui, rc, card, view),
-        ChatEntry::Question(card) => question(ui, rc, card, view),
-        ChatEntry::Plan(card) => plan(ui, rc, card, view),
-        _ => None,
-    }
+    ui.push_id(
+        ("egui_theme_kit.chat.card", entry.key()),
+        |ui| match entry {
+            ChatEntry::Approval(card) => approval(ui, rc, card, view),
+            ChatEntry::Question(card) => question(ui, rc, card, view),
+            ChatEntry::Plan(card) => plan(ui, rc, card, view),
+            _ => None,
+        },
+    )
+    .inner
 }
 
 /// Whether `entry` is a card [`floating_cards`] shows.
@@ -956,6 +1011,17 @@ pub fn floating_cards(
     ui: &mut Ui,
     id_salt: impl AsIdSalt,
     cards: &[ChatEntry<'_>],
+) -> Vec<(String, CardAction)> {
+    let max_h = ui.ctx().content_rect().height() * FLOATING_SHARE;
+    floating_cards_within(ui, id_salt, cards, max_h)
+}
+
+/// [`floating_cards`] scrolling the card past `max_height` points.
+pub fn floating_cards_within(
+    ui: &mut Ui,
+    id_salt: impl AsIdSalt,
+    cards: &[ChatEntry<'_>],
+    max_height: f32,
 ) -> Vec<(String, CardAction)> {
     let shown: Vec<&ChatEntry<'_>> = cards.iter().filter(|e| floats(e)).collect();
     let mut out = Vec::new();
@@ -992,11 +1058,10 @@ pub fn floating_cards(
             }
         });
     }
-    let max_h = ui.ctx().content_rect().height() * FLOATING_SHARE;
     let entry = shown[page];
     ScrollArea::vertical()
-        .id_salt(id.with("scroll"))
-        .max_height(max_h)
+        .id_salt(id.with(("scroll", entry.key())))
+        .max_height(max_height.max(0.0))
         .auto_shrink([false, true])
         .show(ui, |ui| {
             if let Some(action) = entry_card(ui, &mut rc, entry, id) {
@@ -1131,6 +1196,8 @@ mod tests {
             context: Cow::Borrowed("desk"),
             title: Cow::Borrowed("Run a command"),
             command: None,
+            copy_text: None,
+            command_max_lines: None,
             detail: None,
             reason: None,
             choices: CowList::Borrowed(&choices),
@@ -1191,6 +1258,16 @@ mod tests {
             assert!(load_drafts(ui, b, &card).drafts[0].picked.is_empty());
         });
         out.textures_delta.clear();
+    }
+
+    #[test]
+    fn a_cut_command_keeps_whole_lines_and_says_how_many_were_left_out() {
+        assert_eq!(cut_command("a\nb", 2), None);
+        assert_eq!(
+            cut_command("a\nb\nc\nd", 3).as_deref(),
+            Some("a\nb\n… 2 more lines")
+        );
+        assert_eq!(cut_command("a\nb", 1).as_deref(), Some("a\n… 1 more line"));
     }
 
     #[test]

@@ -162,6 +162,8 @@ mod tests {
             context: Cow::Borrowed("desk"),
             title: Cow::Borrowed("Run tests"),
             command: Some(Cow::Borrowed("cargo test")),
+            copy_text: None,
+            command_max_lines: None,
             detail: None,
             reason: None,
             choices: CowList::Borrowed(&choices),

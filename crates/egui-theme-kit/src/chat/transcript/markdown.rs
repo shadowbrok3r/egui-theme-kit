@@ -602,6 +602,18 @@ pub(crate) fn capped(text: &str, max: usize) -> (&str, usize) {
 
 /// A fenced code block on a plate with its language, a copy button and highlighting.
 pub(crate) fn code_block(ui: &mut Ui, rc: &mut RowCx<'_>, lang: &str, code: &str, id: Id) {
+    code_block_copying(ui, rc, lang, code, code, id);
+}
+
+/// [`code_block`] whose copy button copies `copy`.
+pub(crate) fn code_block_copying(
+    ui: &mut Ui,
+    rc: &mut RowCx<'_>,
+    lang: &str,
+    code: &str,
+    copy: &str,
+    id: Id,
+) {
     let json_fence = lang.is_empty() || lang.eq_ignore_ascii_case("json");
     if json_fence && let Some(values) = cached_json(ui.ctx(), code) {
         payload::values(ui, rc, &values, id, Part::Result);
@@ -625,11 +637,11 @@ pub(crate) fn code_block(ui: &mut Ui, rc: &mut RowCx<'_>, lang: &str, code: &str
             let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
             ui.add(egui::Label::new(galley).selectable(false));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let copy = IconButton::new(rc.icons.copy, IconBox::Sm)
+                let copy_button = IconButton::new(rc.icons.copy, IconBox::Sm)
                     .tip("Copy code")
                     .show(ui);
-                if rc.tapped(&copy) {
-                    rc.copy(ui, code.to_owned());
+                if rc.tapped(&copy_button) {
+                    rc.copy(ui, copy.to_owned());
                 }
             });
         });
