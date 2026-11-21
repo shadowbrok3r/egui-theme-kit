@@ -28,6 +28,7 @@ pub use cards::{
     ApprovalCard, CONFIRM_NO, CONFIRM_YES, CardChoice, CardState, PlanCard, PlanStatus, PlanStep,
     Question, QuestionCard, QuestionForm, QuestionItem, floating_cards, plan_progress,
 };
+pub(crate) use entry::cover_uv;
 pub use entry::{
     AgentMessage, AttachmentChip, ChatEntry, Delivery, EntryKind, Notice, Payload, UserMessage,
     WorkItem, WorkKind, WorkStatus,

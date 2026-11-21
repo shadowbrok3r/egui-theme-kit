@@ -312,12 +312,15 @@ pub struct Answer {
     pub note: Option<String>,
 }
 
-/// What the user did on an approval or question card.
+/// What the user did on an approval, question or plan card.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CardAction {
     /// Index of the picked approval choice.
     Choose(usize),
     Answer(Vec<Answer>),
+    /// Skip on a question card, close on a plan card with [`PlanCard::dismiss`] set.
+    ///
+    /// [`PlanCard::dismiss`]: crate::chat::PlanCard::dismiss
     Dismiss,
 }
 

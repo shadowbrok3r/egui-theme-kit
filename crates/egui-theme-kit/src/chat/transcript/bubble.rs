@@ -188,6 +188,7 @@ fn attachments(ui: &mut Ui, rc: &mut RowCx<'_>, key: &str, chips: &[AttachmentCh
                                 ui.add(
                                     Image::from_texture((texture, Vec2::splat(side)))
                                         .fit_to_exact_size(Vec2::splat(side))
+                                        .uv(super::entry::cover_uv(ui.ctx(), texture))
                                         .corner_radius(rc.p.radius_chip),
                                 );
                             }
