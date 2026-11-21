@@ -803,14 +803,14 @@ fn a_drag_on_the_focused_text_scrolls_it_and_keeps_the_cursor() {
     for dy in [20.0, 60.0, 100.0] {
         h.drag_to(p + vec2(0.0, dy));
     }
-    h.release(p + vec2(0.0, 100.0));
-    h.idle(2);
-    assert_eq!(h.cursor(), before);
     assert!(
         (top - h.state.touch.scroll_y - 100.0).abs() < 1.0,
         "{top} -> {}",
         h.state.touch.scroll_y
     );
+    h.release(p + vec2(0.0, 100.0));
+    h.idle(2);
+    assert_eq!(h.cursor(), before);
     assert!(h.focused());
 }
 
@@ -823,7 +823,7 @@ fn a_held_press_selects_instead_of_scrolling() {
     let p = h.state.touch.view.center();
     h.press(p);
     h.idle(25);
-    assert_eq!(h.state.touch.gesture, Gesture::Selecting);
+    assert!(matches!(h.state.touch.gesture, Gesture::Holding { .. }));
     h.drag_to(p - vec2(0.0, 40.0));
     h.release(p - vec2(0.0, 40.0));
     h.idle(2);
@@ -1240,6 +1240,199 @@ fn a_plus_menu_pick_on_touch_keeps_the_cursor_where_the_pick_put_it() {
     }
 }
 
+/// Prose that wraps into many rows with no line breaks.
+fn long_prose() -> String {
+    "the quick brown fox jumps over the lazy dog ".repeat(60)
+}
+
+fn mouse_press(h: &mut Harness, pos: Pos2) {
+    h.frame(vec![Event::PointerMoved(pos), button(pos, true)]);
+}
+
+fn mouse_release(h: &mut Harness, pos: Pos2) {
+    h.frame(vec![button(pos, false)]);
+}
+
+#[test]
+fn a_hold_past_the_long_touch_time_still_drag_selects() {
+    let mut h = Harness::touch(&long_text());
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let top = h.state.touch.scroll_y;
+    let p = h.state.touch.view.center();
+    h.press(p);
+    h.idle(70);
+    let Gesture::Holding {
+        word: Some((ws, we)),
+        ..
+    } = h.state.touch.gesture
+    else {
+        panic!("{:?}", h.state.touch.gesture);
+    };
+    assert!(we > ws, "the held word is selected");
+    assert_eq!(h.cursor(), Some((ws, we)));
+    for dy in [20.0, 40.0, 60.0] {
+        h.drag_to(p - vec2(0.0, dy));
+    }
+    h.release(p - vec2(0.0, 60.0));
+    h.idle(2);
+    let (a, b) = h.cursor().expect("cursor");
+    assert_eq!(a, we);
+    assert!(b < ws, "{a} {b}");
+    assert!((h.state.touch.scroll_y - top).abs() < 1.0);
+}
+
+#[test]
+fn a_press_keeps_the_cursor_until_it_lifts_as_a_tap() {
+    let text = long_text();
+    let len = text.chars().count();
+    let mut h = Harness::touch(&text);
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    assert_eq!(h.cursor(), Some((len, len)));
+    let p = h.state.touch.view.center();
+    h.press(p);
+    assert_eq!(h.cursor(), Some((len, len)));
+    h.drag_to(p);
+    assert_eq!(h.cursor(), Some((len, len)));
+    h.release(p);
+    let (a, b) = h.cursor().expect("cursor");
+    assert_eq!(a, b);
+    assert!(b < len, "{b}");
+}
+
+#[test]
+fn the_tap_that_focuses_reports_the_actions_on_the_same_frame() {
+    let mut h = Harness::touch("hello");
+    let p = h.state.touch.view.center();
+    let r = h.frame(vec![
+        finger(TouchPhase::Start, p),
+        Event::PointerMoved(p),
+        button(p, true),
+    ]);
+    assert_eq!(r.provides_text_actions, h.focused());
+    let r = h
+        .frame_full(vec![
+            finger(TouchPhase::End, p),
+            button(p, false),
+            Event::PointerGone,
+        ])
+        .0;
+    assert!(h.focused());
+    assert!(r.provides_text_actions);
+    h.ctx
+        .memory_mut(|m| m.surrender_focus(Composer::text_id(SALT)));
+    let r = h.frame(Vec::new());
+    assert!(!h.focused());
+    assert!(!r.provides_text_actions);
+}
+
+#[test]
+fn focus_from_the_app_keeps_the_cursor() {
+    let text = long_text();
+    let len = text.chars().count();
+    let mut h = Harness::touch(&text);
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    h.tap(h.state.touch.view.center());
+    h.idle(2);
+    let placed = h.cursor().expect("cursor");
+    assert!(placed.1 < len);
+    let id = Composer::text_id(SALT);
+    h.ctx.memory_mut(|m| m.surrender_focus(id));
+    h.idle(2);
+    assert!(!h.focused());
+    h.ctx.memory_mut(|m| m.request_focus(id));
+    h.idle(2);
+    assert!(h.focused());
+    assert_eq!(h.cursor(), Some(placed));
+}
+
+#[test]
+fn a_first_tap_on_wrapped_prose_keeps_the_end_in_view_as_the_box_narrows() {
+    let text = long_prose();
+    let len = text.chars().count();
+    let mut h = Harness::touch(&text);
+    let wide = h.state.touch.view.width();
+    h.tap(h.state.touch.view.center());
+    h.idle(5);
+    assert!(
+        h.state.touch.view.width() < wide - 50.0,
+        "the action row narrows the text"
+    );
+    assert_eq!(h.cursor(), Some((len, len)));
+    assert!(
+        h.cursor_in_view(),
+        "{:?} in {:?}",
+        h.state.touch.cursor,
+        h.state.touch.view
+    );
+}
+
+#[test]
+fn a_mouse_after_touch_selects_and_places_the_cursor_like_a_desktop() {
+    let text = long_text();
+    let len = text.chars().count();
+    let mut h = Harness::touch(&text);
+    store_cursor(&h.ctx, Composer::text_id(SALT), 5, 5, None);
+    let p = h.state.touch.view.center();
+    mouse_press(&mut h, p);
+    mouse_release(&mut h, p);
+    let r = h.idle(2);
+    assert!(h.focused());
+    assert_ne!(h.cursor(), Some((len, len)));
+    assert!(!r.provides_text_actions);
+
+    let top = h.state.touch.scroll_y;
+    mouse_press(&mut h, p);
+    for dy in [20.0, 40.0, 60.0] {
+        h.frame(vec![Event::PointerMoved(p - vec2(0.0, dy))]);
+    }
+    mouse_release(&mut h, p - vec2(0.0, 60.0));
+    h.idle(1);
+    let (a, b) = h.cursor().expect("cursor");
+    assert_ne!(a, b);
+    assert_eq!(h.state.touch.gesture, Gesture::Idle);
+    assert!((h.state.touch.scroll_y - top).abs() < 1.0);
+}
+
+#[test]
+fn the_narrow_action_row_stays_put_when_the_activity_changes() {
+    let mut h = Harness::touch("hello");
+    h.width = 380.0;
+    h.idle(2);
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let view = h.state.touch.view;
+    let above = |h: &Harness| {
+        h.state
+            .touch
+            .buttons
+            .iter()
+            .all(|(_, b)| b.bottom() <= h.state.touch.view.top())
+    };
+    assert_eq!(h.state.touch.buttons.len(), 4);
+    assert!(above(&h));
+    for activity in [
+        Activity::Busy {
+            enter: SendIntent::Steer,
+            can_steer: true,
+            can_queue: true,
+        },
+        Activity::Idle,
+    ] {
+        h.activity = activity;
+        for _ in 0..3 {
+            h.frame(Vec::new());
+            assert!(
+                (h.state.touch.view.top() - view.top()).abs() < 0.5,
+                "{activity:?}"
+            );
+            assert_eq!(h.state.touch.buttons.len(), 4);
+        }
+    }
+}
+
 #[test]
 fn back_closes_the_plus_menu_and_a_surrendered_query_stays_unfocused() {
     let mut h = Harness::touch("fix this");
@@ -1266,4 +1459,30 @@ fn back_closes_the_plus_menu_and_a_surrendered_query_stays_unfocused() {
         "the text is not refocused"
     );
     assert_eq!(h.state.text(), "fix this");
+}
+
+#[test]
+fn a_flick_on_the_focused_text_coasts_after_it_lifts() {
+    let mut h = Harness::touch(&long_text());
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let p = h.state.touch.view.center() - vec2(0.0, 40.0);
+    h.press(p);
+    for dy in [30.0, 60.0, 90.0] {
+        h.drag_to(p + vec2(0.0, dy));
+    }
+    h.release(p + vec2(0.0, 90.0));
+    let lifted = h.state.touch.scroll_y;
+    assert!(h.state.touch.coasting);
+    h.idle(5);
+    assert!(
+        h.state.touch.scroll_y < lifted - 5.0,
+        "{lifted} -> {}",
+        h.state.touch.scroll_y
+    );
+    h.idle(120);
+    assert!(!h.state.touch.coasting);
+    h.press(h.state.touch.view.center());
+    h.release(h.state.touch.view.center());
+    assert!(!h.state.touch.coasting);
 }
