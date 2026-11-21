@@ -15,9 +15,9 @@ use std::sync::Arc;
 
 use egui::{
     Align, AsIdSalt, Context, Event, EventFilter, FontId, Frame, Galley, Id, IdSalt, Image,
-    InputState, Key, KeyboardShortcut, Layout, Margin, Modifiers, OutputCommand, Rect, Response,
-    ScrollArea, Sense, Stroke, StrokeKind, SurrenderFocusOn, TextBuffer, TextEdit, TextStyle, Ui,
-    UiBuilder, ViewportCommand,
+    InputState, Key, KeyboardShortcut, Layout, Margin, Modifiers, OutputCommand, Pos2, Rect,
+    Response, ScrollArea, Sense, Stroke, StrokeKind, SurrenderFocusOn, TextBuffer, TextEdit,
+    TextStyle, Ui, UiBuilder, ViewportCommand,
     load::SizedTexture,
     pos2,
     text::{CCursor, CCursorRange, LayoutJob, TextFormat},
@@ -53,6 +53,8 @@ const DROP_STROKE: f32 = 2.0;
 const UNRESOLVED_STROKE: f32 = 1.0;
 /// Width change, in points, that relays the row out.
 const RELAYOUT_EPS: f32 = 0.5;
+/// Most buttons the activity adds to the right controls: stop, the other intent and send.
+const BUSY_BUTTONS: f32 = 3.0;
 
 /// What a send does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -198,7 +200,8 @@ pub struct ComposerResponse {
     pub file_hover: bool,
     /// Files were dropped over the composer this frame; they are left in the input for the app.
     pub files_dropped: bool,
-    /// The composer drew its cut, copy, paste and select-all buttons this frame.
+    /// The text has focus and the composer draws its own cut, copy, paste and select-all buttons for it.
+    /// Hosts with their own text toolbar hide it; without [`Composer::clipboard`], Paste sends [`ViewportCommand::RequestPaste`].
     pub provides_text_actions: bool,
 }
 
@@ -380,6 +383,7 @@ impl<'a> Composer<'a> {
         let text_id = text_id_of(self.id_salt);
         let parts = text_id.with("egui_theme_kit.chat.composer.parts");
         let ctx = ui.ctx().clone();
+        let forced = self.touch == Some(true);
         let touch = self
             .touch
             .unwrap_or_else(|| ui.input(|i| i.has_touch_screen()));
@@ -438,15 +442,14 @@ impl<'a> Composer<'a> {
         }
         let step = if touch && editable {
             let cursor = cursor_of(&ctx, text_id);
-            touch::advance(&ctx, &mut state.touch, focused, cursor)
+            touch::advance(&ctx, &mut state.touch, focused, forced, cursor)
         } else {
             state.touch.gesture = Gesture::Idle;
+            state.touch.coasting = false;
             touch::Step::default()
         };
-        if let Some((a, b)) = step.restore {
-            store_cursor(&ctx, text_id, a, b, None);
-        }
-        let actions = (touch && editable && text_actions && focused).then(|| {
+        let finger = forced || state.touch.finger;
+        let actions = (touch && editable && text_actions && focused && finger).then(|| {
             let selected = cursor_of(&ctx, text_id).is_some_and(|(a, b)| a != b);
             Actions {
                 copy: selected,
@@ -517,8 +520,8 @@ impl<'a> Composer<'a> {
                         enter,
                         unresolved: &unresolved,
                         popup: state.popup.is_some(),
-                        scroll_by: step.scroll_by,
-                        track: state.touch.track && state.touch.gesture != Gesture::Scrolling,
+                        step,
+                        track: state.touch.track && !state.touch.scrolling(),
                     };
                     let surrender = guard.then(|| {
                         ctx.options_mut(|o| {
@@ -577,8 +580,8 @@ impl<'a> Composer<'a> {
             apply_text_action(&ctx, text_id, state, action, clipboard);
         }
         let has_focus = ctx.memory(|mem| mem.has_focus(text_id));
-        let regain = std::mem::take(&mut state.touch.regain);
-        if touch && editable && has_focus && !state.touch.was_focused && !regain {
+        let tapped = finger && (text.is_pointer_button_down_on() || text.clicked());
+        if touch && editable && has_focus && !state.touch.was_focused && tapped {
             let end = state.char_len();
             store_cursor(&ctx, text_id, end, end, None);
             state.touch.track = true;
@@ -623,10 +626,8 @@ impl<'a> Composer<'a> {
         if state.refocus && !state.plus.is_open() {
             state.refocus = false;
             state.refocus_again = menu_open;
-            state.touch.regain = true;
             ctx.memory_mut(|mem| mem.request_focus(text_id));
         } else if std::mem::take(&mut state.refocus_again) {
-            state.touch.regain = true;
             ctx.memory_mut(|mem| mem.request_focus(text_id));
         }
 
@@ -636,7 +637,7 @@ impl<'a> Composer<'a> {
             accepted_suggestion: out.accepted,
             file_hover,
             files_dropped,
-            provides_text_actions: actions.is_some(),
+            provides_text_actions: touch && editable && text_actions && has_focus && finger,
         }
     }
 }
@@ -1086,8 +1087,8 @@ struct TextArea<'s> {
     unresolved: &'s [bool],
     /// The popup is open, so Tab and Escape reach the composer instead of moving focus.
     popup: bool,
-    /// Points a touch drag moved the text down by.
-    scroll_by: f32,
+    /// This frame's touch gesture.
+    step: touch::Step,
     /// Scroll the cursor into view.
     track: bool,
 }
@@ -1136,8 +1137,8 @@ impl TextArea<'_> {
             .max_height(self.max_h)
             .auto_shrink([false, true])
             .animated(false);
-        if self.scroll_by != 0.0 {
-            area = area.vertical_scroll_offset(state.touch.scroll_y - self.scroll_by);
+        if self.step.scroll_by != 0.0 {
+            area = area.vertical_scroll_offset(state.touch.scroll_y - self.step.scroll_by);
         }
         let output = area.show(&mut child, |ui| {
             let edit = TextEdit::multiline(state.buffer_mut());
@@ -1158,8 +1159,12 @@ impl TextArea<'_> {
                 .layouter(&mut layouter)
                 .show(ui);
             let focused = ui.memory(|mem| mem.has_focus(self.id));
-            let cursor = out.cursor_range.map(|r| {
-                let mut rect = out.galley.pos_from_cursor(r.primary);
+            let placed = self.place(ui.ctx(), state, &out);
+            let primary = placed
+                .map(|(_, b)| CCursor::new(b))
+                .or(out.cursor_range.map(|r| r.primary));
+            let cursor = primary.map(|primary| {
+                let mut rect = out.galley.pos_from_cursor(primary);
                 if rect.height() < 1.0 {
                     rect.max.y = rect.min.y + row_h;
                 }
@@ -1188,14 +1193,18 @@ impl TextArea<'_> {
         );
         let t = &mut state.touch;
         let resized = (view.height() - t.view.height()).abs() > RELAYOUT_EPS
+            || (view.width() - t.view.width()).abs() > RELAYOUT_EPS
             || (self.max_h - t.max_h).abs() > RELAYOUT_EPS;
+        if focused && resized {
+            t.coasting = false;
+        }
         t.view = view;
         t.scroll_y = output.state.clamped_offset().y;
         t.scroll_max = (output.content_size.y - view.height()).max(0.0);
         t.max_h = self.max_h;
         t.cursor = cursor.unwrap_or(Rect::NOTHING);
         t.drawn = drawn;
-        t.track = focused && resized && t.gesture != Gesture::Scrolling;
+        t.track = focused && resized && !t.scrolling();
         if t.track {
             ui.ctx().request_repaint();
         }
@@ -1204,6 +1213,40 @@ impl TextArea<'_> {
             ui.ctx().request_repaint();
         }
         (response, height)
+    }
+
+    /// Applies the gesture's cursor moves after the text edit ran; returns the selection it set.
+    fn place(
+        &self,
+        ctx: &Context,
+        state: &mut ComposerState,
+        out: &egui::text_edit::TextEditOutput,
+    ) -> Option<(usize, usize)> {
+        let at = |p: Pos2| out.galley.cursor_from_pos(p - out.galley_pos).index.0;
+        let step = self.step;
+        let mut placed = step.keep;
+        if let Some(p) = step.tap {
+            let c = at(p);
+            placed = Some((c, c));
+        }
+        if let Some(p) = step.hold {
+            let word = touch::word_at(state.text(), at(p));
+            state.touch.gesture = Gesture::Holding {
+                origin: p,
+                word: Some(word),
+            };
+            placed = Some(word);
+        }
+        if let (Some(p), Gesture::Holding { word: Some(w), .. }) =
+            (step.extend, state.touch.gesture)
+        {
+            placed = Some(touch::extend_word(w, at(p)));
+        }
+        let (a, b) = placed?;
+        if cursor_of(ctx, self.id) != Some((a, b)) {
+            store_cursor(ctx, self.id, a, b, None);
+        }
+        placed
     }
 }
 
@@ -1379,9 +1422,10 @@ impl Controls<'_, '_> {
             } else {
                 side + gap.x
             };
+            let right_w = state.touch.fixed_right_w + BUSY_BUTTONS * (side + gap.x);
             let apart = self
                 .actions
-                .filter(|_| base_left + action_row_w(side, gap.x) + state.right_w > width);
+                .filter(|_| base_left + action_row_w(side, gap.x) + right_w > width);
             if apart.is_some() {
                 self.actions = None;
             }
@@ -1498,6 +1542,7 @@ impl Controls<'_, '_> {
         {
             out.action = Some(ComposerAction::Attach);
         }
+        state.touch.fixed_right_w = right.min_rect().width().max(0.0);
         if mode.activity.is_busy() {
             let stop = IconButton::new(look.icons.stop, look.icon_box)
                 .tip("Stop")
