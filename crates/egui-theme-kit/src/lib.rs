@@ -83,6 +83,9 @@
 //! | `logger` | no | in-app log viewer |
 //! | `icon-pack` | no | `From<egui_icon_pack::Icon>` for `controls::Icon`, duotone when the pack has a duo layer |
 //! | `qr` | no | `controls::QrCode`, a QR code painted from a string; implies `controls` |
+//! | `chat` | no | shared AI chat widgets in [`chat`]; implies `controls` |
+//! | `chat-json` | no | `chat` plus payload trees through `egui_json_tree` |
+//! | `chat-syntax` | no | `chat` plus syntect code highlighting through `egui_extras` |
 //!
 //! With `default-features = false` the core remains on egui alone: tokens, metrics, fonts, the widget
 //! theme, presets, saved themes and the debug panel, installed by [`init_ctx`]. With `eframe` the blur
@@ -91,6 +94,8 @@
 
 #[cfg(feature = "picker")]
 pub mod appearance;
+#[cfg(feature = "chat")]
+pub mod chat;
 #[cfg(feature = "title-bar-core")]
 pub mod chrome;
 pub mod cli;

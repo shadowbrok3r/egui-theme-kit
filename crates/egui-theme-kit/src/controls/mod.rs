@@ -54,7 +54,7 @@ pub use labels::{
     IconLabel, IconLink, Pill, Section, SpinnerSize, badge, count_badge, elided_label, fold_header,
     hairline, heading, icon_hyperlink, icon_label, icon_link, loading_row, note, pill,
     section_header, section_label, section_label_icon, spinner, status_label, subheading,
-    tinted_spinner, vline,
+    tinted_spinner, title_rule, vline,
 };
 pub use layout::{
     BarKind, MenuButton, MenuItem, ModalOutcome, ModalWidth, Role, bar, callout, card, card_frame,
@@ -81,7 +81,7 @@ pub use tiles::{
     ActionTile, Avatar, Check, IconChip, StatTile, TILE_CHIP, TileMark, Trend, action_tile, avatar,
     check_row, initials, name_hue, stat_tile, status_chip, tile_columns, tile_grid,
 };
-pub use toggle::{checkbox, toggle};
+pub use toggle::{Toggle, checkbox, toggle};
 
 pub(crate) use crate::kit::{
     CHECK_INSET, LABEL_GAP, State, box_radius, button_colors, checkbox_colors, dropdown_colors,

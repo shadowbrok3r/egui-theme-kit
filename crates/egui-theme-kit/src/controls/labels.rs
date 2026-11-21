@@ -70,6 +70,16 @@ pub fn hairline(ui: &mut Ui) -> Response {
     response
 }
 
+/// A one-pixel separator across the full clip-rect width, for the bottom edge of a bar.
+pub fn title_rule(ui: &mut Ui) -> Response {
+    let (t, _) = kit(ui);
+    let (rect, response) = ui.allocate_exact_size(vec2(fill_width(ui), 1.0), Sense::hover());
+    let clip = ui.clip_rect().x_range();
+    let y = ui.painter().round_to_pixel_center(rect.center().y);
+    ui.painter().hline(clip, y, Stroke::new(1.0, t.separator));
+    response
+}
+
 /// A vertical one-pixel rule `height` tall.
 pub fn vline(ui: &mut Ui, height: f32) -> Response {
     let (t, _) = kit(ui);
