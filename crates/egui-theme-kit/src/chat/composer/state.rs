@@ -73,6 +73,8 @@ pub struct ComposerState {
     pub(super) plus: CommandPaletteState,
     /// Focus returns to the text edit once the `+` menu closes.
     pub(super) refocus: bool,
+    /// Focus is requested again on the next frame, when the closed `+` menu no longer blocks it.
+    pub(super) refocus_again: bool,
     /// Cursor to store on the next frame after a change outside the text edit.
     pub(super) pending_cursor: Option<usize>,
     pub(super) labels: LabelCache,

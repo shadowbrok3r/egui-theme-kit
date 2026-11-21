@@ -299,6 +299,8 @@ pub struct CommandPaletteState {
     /// Index into the shown results.
     pub selected: usize,
     scroll: bool,
+    /// The palette drew on the last frame; the first frame it draws focuses the query.
+    shown: bool,
 }
 
 impl CommandPaletteState {
@@ -312,6 +314,7 @@ impl CommandPaletteState {
         self.query.clear();
         self.selected = 0;
         self.scroll = true;
+        self.shown = false;
     }
 
     /// Closes and clears the query.
@@ -319,6 +322,7 @@ impl CommandPaletteState {
         self.open = false;
         self.query.clear();
         self.selected = 0;
+        self.shown = false;
     }
 
     pub fn toggle(&mut self) {
@@ -365,7 +369,8 @@ impl Keys {
                 page_down: i.count_and_consume_key(Modifiers::NONE, Key::PageDown),
                 page_up: i.count_and_consume_key(Modifiers::NONE, Key::PageUp),
                 enter: i.consume_key(Modifiers::NONE, Key::Enter),
-                escape: i.consume_key(Modifiers::NONE, Key::Escape),
+                escape: i.consume_key(Modifiers::NONE, Key::Escape)
+                    | i.consume_key(Modifiers::NONE, Key::BrowserBack),
             }
         })
     }
@@ -460,7 +465,7 @@ impl<'a> CommandPalette<'a> {
         self
     }
 
-    /// The id of the query field, which holds focus while the palette is open.
+    /// The id of the query field, focused when the palette opens and kept focused without touch.
     pub fn query_id(&self) -> Id {
         self.id.with("query")
     }
@@ -473,8 +478,10 @@ impl<'a> CommandPalette<'a> {
         items: &[PaletteItem<'_, T>],
     ) -> Option<T> {
         if !state.open {
+            state.shown = false;
             return None;
         }
+        let opening = !std::mem::replace(&mut state.shown, true);
         let keys = Keys::take(ctx);
         if keys.escape {
             state.close();
@@ -515,7 +522,7 @@ impl<'a> CommandPalette<'a> {
         let response = Modal::new(self.id).area(area).frame(frame).show(ctx, |ui| {
             ui.set_width(inner_w);
             ui.spacing_mut().item_spacing.y = 0.0;
-            if self.query_row(ui, state, inner_w, query_h) {
+            if self.query_row(ui, state, inner_w, query_h, opening) {
                 list = rows(items, &state.query);
                 shown = entries(&list);
                 state.selected = 0;
@@ -593,13 +600,14 @@ impl<'a> CommandPalette<'a> {
         id
     }
 
-    /// The search icon and query editor; returns whether the query changed.
+    /// The search icon and query editor, focused when `opening` or every frame without touch; returns whether the query changed.
     fn query_row(
         &self,
         ui: &mut Ui,
         state: &mut CommandPaletteState,
         width: f32,
         height: f32,
+        opening: bool,
     ) -> bool {
         let (t, m) = kit(ui);
         let (row, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
@@ -633,7 +641,8 @@ impl<'a> CommandPalette<'a> {
             .min_size(text_rect.size())
             .align(Align2::LEFT_CENTER)
             .show(&mut child);
-        if !output.response.has_focus() {
+        let touch = ui.input(|i| i.has_touch_screen());
+        if opening || (!touch && !output.response.has_focus()) {
             output.response.request_focus();
         }
         output.response.changed()

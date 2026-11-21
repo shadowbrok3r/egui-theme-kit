@@ -72,6 +72,12 @@ fn commands(_: &str) -> Vec<SlashCommand<'static>> {
             name: "/permissions".into(),
             args: "<mode>".into(),
             enabled: false,
+            ..compact.clone()
+        },
+        SlashCommand {
+            id: "steer".into(),
+            name: "/steer".into(),
+            args: "<message>".into(),
             ..compact
         },
     ]
@@ -1167,4 +1173,97 @@ fn control_box_sizes_app_buttons_like_the_composer_buttons() {
             "touch {touch}"
         );
     }
+}
+
+impl Harness {
+    /// Opens the `+` menu as its button does.
+    fn open_plus(&mut self) {
+        self.state.plus.open();
+        self.state.refocus = true;
+    }
+
+    /// Opens the `+` menu, searches it for `query` and picks the best match.
+    fn pick_plus(&mut self, query: &str) {
+        self.open_plus();
+        self.frame(Vec::new());
+        self.frame(vec![text(query)]);
+        self.frame(vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(!self.state.plus.is_open(), "the pick closes the menu");
+    }
+}
+
+#[test]
+fn a_plus_menu_pick_keeps_the_text_focused_with_the_cursor_after_the_command() {
+    let mut h = Harness::new();
+    h.frame(vec![text("fix this")]);
+    h.pick_plus("steer");
+    assert_eq!(h.state.text(), "/steer fix this");
+    for frame in 0..4 {
+        h.frame(Vec::new());
+        assert!(h.focused(), "frame {frame} after the pick");
+        assert_eq!(h.cursor(), Some((7, 7)), "frame {frame} after the pick");
+    }
+}
+
+#[test]
+fn mention_from_the_plus_menu_keeps_focus_and_opens_the_popup() {
+    let mut h = Harness::new();
+    h.pick_plus("mention");
+    assert_eq!(h.state.text(), "@");
+    h.idle(3);
+    assert!(h.focused());
+    assert!(h.state.popup.is_some(), "the mention popup opens");
+}
+
+#[test]
+fn a_plus_menu_pick_on_touch_keeps_the_cursor_where_the_pick_put_it() {
+    for host_repins in [false, true] {
+        let mut h = Harness::touch("fix this");
+        h.tap(h.state.touch.view.center());
+        h.idle(3);
+        assert_eq!(h.cursor(), Some((8, 8)));
+        h.pick_plus("steer");
+        assert_eq!(h.state.text(), "/steer fix this");
+        for frame in 0..4 {
+            if host_repins && !h.focused() {
+                h.ctx
+                    .memory_mut(|m| m.request_focus(Composer::text_id(SALT)));
+            }
+            h.frame(Vec::new());
+            assert!(h.focused(), "host {host_repins}, frame {frame}");
+            assert_eq!(
+                h.cursor(),
+                Some((7, 7)),
+                "host {host_repins}, frame {frame}"
+            );
+        }
+    }
+}
+
+#[test]
+fn back_closes_the_plus_menu_and_a_surrendered_query_stays_unfocused() {
+    let mut h = Harness::touch("fix this");
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    h.open_plus();
+    h.idle(2);
+    let query = h.ctx.memory(|m| m.focused()).expect("the query is focused");
+    assert_ne!(query, Composer::text_id(SALT));
+    h.ctx.memory_mut(|m| m.surrender_focus(query));
+    h.idle(3);
+    assert_eq!(
+        h.ctx.memory(|m| m.focused()),
+        None,
+        "focus stays surrendered"
+    );
+    assert!(h.state.plus.is_open());
+    h.frame(vec![key(Key::BrowserBack, Modifiers::NONE)]);
+    assert!(!h.state.plus.is_open(), "back closes the menu");
+    h.idle(3);
+    assert_eq!(
+        h.ctx.memory(|m| m.focused()),
+        None,
+        "the text is not refocused"
+    );
+    assert_eq!(h.state.text(), "fix this");
 }
