@@ -3,6 +3,7 @@
 use egui::{Align, Color32, Id, Layout, Ui, text::LayoutJob};
 use serde_json::Value;
 
+use super::bubble::{Piece, split_claimed};
 use super::entry::Payload;
 use super::markdown::{cached_json, capped, more_note, wrap_width};
 use super::row::RowCx;
@@ -29,15 +30,25 @@ impl Part {
     }
 }
 
-/// Draws `payload` under `id`.
-pub(crate) fn show(ui: &mut Ui, rc: &mut RowCx<'_>, payload: &Payload<'_>, id: Id, part: Part) {
+/// Draws `payload` under `id`; with `claim`, lines of non-JSON text the app claims are drawn by the app for that entry key.
+pub(crate) fn show(
+    ui: &mut Ui,
+    rc: &mut RowCx<'_>,
+    payload: &Payload<'_>,
+    id: Id,
+    part: Part,
+    claim: Option<&str>,
+) {
     match payload {
         Payload::Json(value) => values(ui, rc, std::slice::from_ref(value.as_ref()), id, part),
         Payload::Text(text) => match cached_json(ui.ctx(), text) {
             Some(parsed) => values(ui, rc, &parsed, id, part),
             None => {
                 let ink = rc.p.text;
-                mono_text(ui, rc, text, ink, id);
+                match claim {
+                    Some(key) => mono_lines(ui, rc, text, ink, id, key),
+                    None => mono_text(ui, rc, text, ink, id),
+                }
             }
         },
     }
@@ -69,6 +80,61 @@ pub(crate) fn values(ui: &mut Ui, rc: &mut RowCx<'_>, values: &[Value], id: Id, 
 
 /// Monospace text with a copy button, capped at [`MONO_MAX_CHARS`].
 pub(crate) fn mono_text(ui: &mut Ui, rc: &mut RowCx<'_>, text: &str, ink: Color32, id: Id) {
+    mono_column(ui, rc, text, id, |ui, rc| {
+        let (shown, left) = capped(text, MONO_MAX_CHARS);
+        mono_label(ui, rc, shown, ink);
+        if left > 0 {
+            more_note(ui, rc, left);
+        }
+    });
+}
+
+/// [`mono_text`] whose lines the app claims are drawn by the app for the entry keyed `key`.
+pub(crate) fn mono_lines(
+    ui: &mut Ui,
+    rc: &mut RowCx<'_>,
+    text: &str,
+    ink: Color32,
+    id: Id,
+    key: &str,
+) {
+    let Some(lines) = rc.agent_lines else {
+        return mono_text(ui, rc, text, ink, id);
+    };
+    let (shown, left) = capped(text, MONO_MAX_CHARS);
+    let pieces = split_claimed(shown, |l| lines.claims(l));
+    if !pieces.iter().any(|p| matches!(p, Piece::Line(_))) {
+        return mono_text(ui, rc, text, ink, id);
+    }
+    let last = pieces.len() - 1;
+    mono_column(ui, rc, text, id, |ui, rc| {
+        for (n, piece) in pieces.into_iter().enumerate() {
+            match piece {
+                Piece::Text(run) if n < last => {
+                    // Line ending before a claimed line.
+                    let run = run.strip_suffix('\n').unwrap_or(run);
+                    mono_label(ui, rc, run.strip_suffix('\r').unwrap_or(run), ink);
+                }
+                Piece::Text(run) => mono_label(ui, rc, run, ink),
+                Piece::Line(line) => {
+                    ui.push_id(n, |ui| lines.show(ui, key, line));
+                }
+            }
+        }
+        if left > 0 {
+            more_note(ui, rc, left);
+        }
+    });
+}
+
+/// A copy button for all of `text` beside a column that `body` fills.
+fn mono_column(
+    ui: &mut Ui,
+    rc: &mut RowCx<'_>,
+    text: &str,
+    id: Id,
+    body: impl FnOnce(&mut Ui, &mut RowCx<'_>),
+) {
     ui.push_id(id, |ui| {
         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
             let copy = IconButton::new(rc.icons.copy, IconBox::Sm)
@@ -77,19 +143,17 @@ pub(crate) fn mono_text(ui: &mut Ui, rc: &mut RowCx<'_>, text: &str, ink: Color3
             if rc.tapped(&copy) {
                 rc.copy(ui, text.to_owned());
             }
-            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                let (shown, left) = capped(text, MONO_MAX_CHARS);
-                let mut job =
-                    LayoutJob::simple(shown.to_owned(), rc.f.mono.clone(), ink, wrap_width(ui));
-                job.wrap.break_anywhere = true;
-                let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
-                ui.add(egui::Label::new(galley).selectable(rc.selectable));
-                if left > 0 {
-                    more_note(ui, rc, left);
-                }
-            });
+            ui.with_layout(Layout::top_down(Align::Min), |ui| body(ui, rc));
         });
     });
+}
+
+/// `text` as one wrapped monospace label.
+fn mono_label(ui: &mut Ui, rc: &RowCx<'_>, text: &str, ink: Color32) {
+    let mut job = LayoutJob::simple(text.to_owned(), rc.f.mono.clone(), ink, wrap_width(ui));
+    job.wrap.break_anywhere = true;
+    let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+    ui.add(egui::Label::new(galley).selectable(rc.selectable));
 }
 
 #[cfg(test)]
@@ -111,6 +175,7 @@ mod tests {
                     &Payload::Json(Cow::Borrowed(&value)),
                     id.with(0),
                     Part::Arguments,
+                    None,
                 );
                 show(
                     ui,
@@ -118,6 +183,7 @@ mod tests {
                     &Payload::Text(Cow::Borrowed("{\"ok\": true}")),
                     id.with(1),
                     Part::Result,
+                    None,
                 );
                 let long = "x".repeat(MONO_MAX_CHARS + 10);
                 show(
@@ -126,6 +192,7 @@ mod tests {
                     &Payload::Text(Cow::Owned(long)),
                     id.with(2),
                     Part::Result,
+                    None,
                 );
                 assert!(rc.actions.is_empty());
             });

@@ -107,11 +107,16 @@ fn every_kind() -> Vec<ChatEntry<'static>> {
             text: Cow::Borrowed("queued with a file"),
             author: Some(Cow::Borrowed("Logan")),
             time: None,
-            attachments: CowList::Owned(vec![AttachmentChip {
-                name: Cow::Borrowed("dump.dmp"),
-                image: None,
-                reading: true,
-            }]),
+            attachments: CowList::Owned(vec![
+                AttachmentChip {
+                    reading: true,
+                    ..AttachmentChip::new("dump.dmp")
+                },
+                AttachmentChip {
+                    failed: true,
+                    ..AttachmentChip::new("trace.png")
+                },
+            ]),
             delivery: Delivery::Failed,
         }),
         work("w0", WorkKind::Reasoning, WorkStatus::Ok),
@@ -656,19 +661,35 @@ fn claimed_lines_split_out_of_agent_text_except_inside_fences() {
     );
 }
 
+/// Draws lines holding a media tag as a "picture" label and records each `(key, line)` it drew.
+#[derive(Default)]
+struct Media(std::cell::RefCell<Vec<(String, String)>>);
+
+impl AgentLines for Media {
+    fn claims(&self, line: &str) -> bool {
+        line.contains("[media:")
+    }
+
+    fn show(&self, ui: &mut Ui, key: &str, line: &str) {
+        ui.label("picture");
+        self.0.borrow_mut().push((key.to_owned(), line.to_owned()));
+    }
+}
+
+/// Claims no line.
+struct NoLines;
+
+impl AgentLines for NoLines {
+    fn claims(&self, _line: &str) -> bool {
+        false
+    }
+
+    fn show(&self, _ui: &mut Ui, _key: &str, _line: &str) {}
+}
+
 #[test]
 fn the_app_draws_claimed_agent_lines_in_place() {
-    struct Media(std::cell::RefCell<Vec<(String, String)>>);
-    impl AgentLines for Media {
-        fn claims(&self, line: &str) -> bool {
-            line.starts_with("[media:")
-        }
-        fn show(&self, ui: &mut Ui, key: &str, line: &str) {
-            ui.label("picture");
-            self.0.borrow_mut().push((key.to_owned(), line.to_owned()));
-        }
-    }
-    let media = Media(Default::default());
+    let media = Media::default();
     let entries = vec![agent("a1".into(), "before\n[media:x.png]\nafter")];
     let ctx = Context::default();
     let mut state = TranscriptState::default();
@@ -694,4 +715,275 @@ fn the_app_draws_claimed_agent_lines_in_place() {
         media.0.borrow()[0],
         ("a1".to_owned(), "[media:x.png]".to_owned())
     );
+}
+
+/// A tool call with media in its text result and body, a command with media in its output and a JSON
+/// result, and a file change whose diff mentions media.
+fn media_work() -> Vec<ChatEntry<'static>> {
+    let mut tool = work("w-media", WorkKind::Tool, WorkStatus::Ok);
+    if let ChatEntry::Work(w) = &mut tool {
+        w.arguments = Some(Payload::Text(Cow::Borrowed("[media:args.png]")));
+        w.result = Some(Payload::Text(Cow::Borrowed("before\n[media:x.png]\nafter")));
+        w.body = Some(Cow::Borrowed("intro\n[media:y.png]"));
+    }
+    let mut command = work("w-cmd", WorkKind::Command, WorkStatus::Ok);
+    if let ChatEntry::Work(w) = &mut command {
+        w.result = Some(Payload::Json(Cow::Owned(
+            serde_json::json!({ "path": "[media:z.png]" }),
+        )));
+        w.body = Some(Cow::Borrowed("out 1\n[media:out.png]\nout 2"));
+    }
+    let mut diff = work("w-diff", WorkKind::FileChange, WorkStatus::Ok);
+    if let ChatEntry::Work(w) = &mut diff {
+        w.body = Some(Cow::Borrowed("+[media:diff.png]"));
+    }
+    vec![tool, command, diff]
+}
+
+/// Frames of `entries` on a tall screen with the work group open and, when `opened`, each call opened too.
+fn work_frames(
+    ctx: &Context,
+    entries: &[ChatEntry<'_>],
+    lines: Option<&dyn AgentLines>,
+    opened: bool,
+) -> Vec<egui::epaint::ClippedShape> {
+    let mut state = TranscriptState::default();
+    state.set_group_open("w-media", Some(true));
+    let mut shapes = Vec::new();
+    let tall = RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 2000.0))),
+        ..RawInput::default()
+    };
+    for _ in 0..3 {
+        let mut out = ctx.run_ui(tall.clone(), |ui| {
+            let view = ui
+                .scope_id()
+                .with(("egui_theme_kit.chat.transcript", IdSalt::new("work-media")));
+            for e in entries {
+                let id = crate::chat::types::item_id(view, e.key(), "call_open");
+                ui.data_mut(|d| d.insert_temp(id, opened));
+            }
+            let mut t = Transcript::new("work-media");
+            if let Some(lines) = lines {
+                t = t.agent_lines(lines);
+            }
+            t.show(ui, &mut state, entries, |_, _| {});
+        });
+        out.textures_delta.clear();
+        shapes = out.shapes;
+    }
+    shapes
+}
+
+#[test]
+fn opened_work_items_route_claimed_text_lines_to_the_app() {
+    let entries = media_work();
+    let media = Media::default();
+    work_frames(&Context::default(), &entries, Some(&media), false);
+    assert!(media.0.borrow().is_empty(), "{:?}", media.0.borrow());
+
+    let shapes = work_frames(&Context::default(), &entries, Some(&media), true);
+    let drawn = media.0.borrow().clone();
+    for (key, line) in [
+        ("w-media", "[media:x.png]"),
+        ("w-media", "[media:y.png]"),
+        ("w-cmd", "[media:out.png]"),
+    ] {
+        assert!(
+            drawn.contains(&(key.to_owned(), line.to_owned())),
+            "{line} not drawn by the app: {drawn:?}"
+        );
+    }
+    for line in ["[media:args.png]", "[media:z.png]", "+[media:diff.png]"] {
+        assert!(
+            drawn.iter().all(|(_, l)| l != line),
+            "{line} offered: {drawn:?}"
+        );
+    }
+    let top = |needle| text_top(&shapes, needle).unwrap_or_else(|| panic!("{needle} drawn"));
+    assert!(top("before") < top("after"));
+    assert!(top("out 1") < top("out 2"));
+    assert!(text_top(&shapes, "[media:x.png]").is_none());
+    assert!(text_top(&shapes, "[media:out.png]").is_none());
+}
+
+#[test]
+fn opened_work_items_draw_unclaimed_text_as_without_lines() {
+    let entries = media_work();
+    let texts = |shapes: Vec<egui::epaint::ClippedShape>| -> Vec<(String, Pos2)> {
+        shapes
+            .into_iter()
+            .filter_map(|c| match c.shape {
+                egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.pos)),
+                _ => None,
+            })
+            .collect()
+    };
+    let plain = texts(work_frames(&Context::default(), &entries, None, true));
+    let unclaimed = texts(work_frames(
+        &Context::default(),
+        &entries,
+        Some(&NoLines),
+        true,
+    ));
+    assert!(
+        plain
+            .iter()
+            .any(|(t, _)| t == "before\n[media:x.png]\nafter")
+    );
+    assert_eq!(plain, unclaimed);
+}
+
+/// Screen rect of the visible text galley that reads `needle`.
+fn text_rect(shapes: &[egui::epaint::ClippedShape], needle: &str) -> Vec<Rect> {
+    shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) if t.galley.text() == needle => {
+                Some(t.galley.rect.translate(t.pos.to_vec2()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn press(pos: Pos2, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn a_failed_attachment_offers_a_retry_that_reports_its_index() {
+    let entries = vec![ChatEntry::User(UserMessage {
+        key: Cow::Borrowed("u-f"),
+        text: Cow::Borrowed("see attached"),
+        author: None,
+        time: None,
+        attachments: CowList::Owned(vec![
+            AttachmentChip::new("ok.txt"),
+            AttachmentChip {
+                failed: true,
+                ..AttachmentChip::new("trace.png")
+            },
+            AttachmentChip {
+                failed: true,
+                reading: true,
+                ..AttachmentChip::new("again.png")
+            },
+        ]),
+        delivery: Delivery::Sent,
+    })];
+    let ctx = Context::default();
+    let mut state = TranscriptState::default();
+    let mut actions = Vec::new();
+    let mut frame = |events: Vec<egui::Event>| {
+        let raw = RawInput { events, ..input() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let r = Transcript::new("retry").show(ui, &mut state, &entries, |_, _| {});
+            actions.extend(r.actions);
+        });
+        out.textures_delta.clear();
+        out.shapes
+    };
+    frame(Vec::new());
+    let shapes = frame(Vec::new());
+    let retries = text_rect(&shapes, "Retry");
+    assert_eq!(retries.len(), 1, "one retry, none while reading");
+    let at = retries[0].center();
+    frame(vec![egui::Event::PointerMoved(at)]);
+    frame(vec![press(at, true)]);
+    frame(vec![press(at, false)]);
+    frame(Vec::new());
+    assert_eq!(
+        actions,
+        vec![ChatAction::RetryAttachment {
+            key: "u-f".to_owned(),
+            index: 1,
+        }]
+    );
+}
+
+#[test]
+fn custom_rows_see_the_tap_that_stops_a_fling_as_suppressed() {
+    let entries: Vec<ChatEntry<'static>> = (0..60)
+        .map(|i| ChatEntry::Custom {
+            key: Cow::Owned(format!("c{i}")),
+        })
+        .collect();
+    let ctx = Context::default();
+    let mut state = TranscriptState::default();
+    let mut taps: Vec<(String, bool)> = Vec::new();
+    let mut time = 0.0;
+    let mut frame =
+        |events: Vec<egui::Event>, state: &mut TranscriptState, taps: &mut Vec<(String, bool)>| {
+            time += 1.0 / 60.0;
+            let touch_screen = egui::Event::Touch {
+                device_id: egui::TouchDeviceId(1),
+                id: egui::TouchId(1),
+                phase: egui::TouchPhase::Cancel,
+                pos: Pos2::ZERO,
+                force: None,
+            };
+            let raw = RawInput {
+                time: Some(time),
+                events: std::iter::once(touch_screen).chain(events).collect(),
+                ..input()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                Transcript::new("fling").show(ui, state, &entries, |ui, key| {
+                    let size = vec2(ui.available_width(), 40.0);
+                    let (_, r) = ui.allocate_exact_size(size, egui::Sense::click());
+                    if r.clicked() {
+                        taps.push((key.to_owned(), Transcript::tap_suppressed(ui.ctx())));
+                    }
+                });
+            });
+            out.textures_delta.clear();
+        };
+    let start = Pos2::new(400.0, 150.0);
+    for _ in 0..3 {
+        frame(
+            vec![egui::Event::PointerMoved(start)],
+            &mut state,
+            &mut taps,
+        );
+    }
+    frame(vec![press(start, true)], &mut state, &mut taps);
+    let mut at = start;
+    for _ in 0..5 {
+        at.y += 50.0;
+        frame(vec![egui::Event::PointerMoved(at)], &mut state, &mut taps);
+    }
+    frame(vec![press(at, false)], &mut state, &mut taps);
+    let sid = state.scroll_id.expect("scroll area drawn");
+    let speed = ScrollState::load(&ctx, sid).map_or(0.0, |s| s.velocity().length());
+    assert!(speed > FLING_SPEED, "no fling: {speed}");
+    assert!(taps.is_empty(), "{taps:?}");
+
+    frame(vec![press(at, true)], &mut state, &mut taps);
+    assert!(state.tap_suppressed());
+    frame(vec![press(at, false)], &mut state, &mut taps);
+    assert!(state.tap_suppressed());
+    assert!(!Transcript::tap_suppressed(&ctx));
+    assert_eq!(taps.len(), 1, "{taps:?}");
+    assert!(
+        taps[0].1,
+        "the tap that stopped the fling counted: {taps:?}"
+    );
+
+    for _ in 0..600 {
+        frame(Vec::new(), &mut state, &mut taps);
+        if ScrollState::load(&ctx, sid).is_some_and(|s| s.velocity().length() < 1.0) {
+            break;
+        }
+    }
+    frame(vec![press(at, true)], &mut state, &mut taps);
+    frame(vec![press(at, false)], &mut state, &mut taps);
+    assert!(!state.tap_suppressed());
+    assert_eq!(taps.len(), 2, "{taps:?}");
+    assert!(!taps[1].1, "a tap at rest is suppressed: {taps:?}");
 }

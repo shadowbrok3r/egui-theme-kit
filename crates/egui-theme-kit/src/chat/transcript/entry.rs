@@ -160,10 +160,24 @@ pub enum Payload<'a> {
 }
 
 /// A file or image attached to a user message.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AttachmentChip<'a> {
     pub name: CowStr<'a>,
     pub image: Option<TextureId>,
     /// The app is still reading the file.
     pub reading: bool,
+    /// The file did not load: transcript chips offer a retry ([`ChatAction::RetryAttachment`]) and composer chips tint the name; ignored while `reading`.
+    ///
+    /// [`ChatAction::RetryAttachment`]: crate::chat::ChatAction::RetryAttachment
+    pub failed: bool,
+}
+
+impl<'a> AttachmentChip<'a> {
+    /// A loaded chip named `name` without a thumbnail.
+    pub fn new(name: impl Into<CowStr<'a>>) -> Self {
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
+    }
 }

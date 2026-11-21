@@ -5,15 +5,16 @@ use std::borrow::Cow;
 use egui::{Align, CentralPanel, ComboBox, Frame, Layout, Rect, Ui, UiBuilder, pos2, vec2};
 use egui_theme_kit::PresetStyles;
 use egui_theme_kit::chat::{
-    Activity, AgentMessage, AppBarAction, ApprovalCard, AttachmentChip, BarButton, BoardAction,
-    BoardGroup, CardAction, CardChoice, CardState, ChatAction, ChatAppBar, ChatEntry, ChipKind,
-    Composer, ComposerAction, ComposerMode, ComposerState, CowList, Delivery, DetailLevel,
-    EnterBehavior, Jump, LoadState, MentionCandidate, MentionRef, MentionSource, MenuEntry,
-    MessageNav, NavStep, NewSessionButton, Notice, OptionChip, Payload, PlanCard, PlanStatus,
-    PlanStep, PlusItem, Question, QuestionCard, QuestionForm, QuestionItem, Resolution, SendIntent,
-    SessionBar, SessionBarAction, SessionList, SessionListAction, SessionRow, SessionSection,
-    SessionStatus, SlashCommand, Tone, Transcript, TranscriptOptions, TranscriptState, UnixMs,
-    UserMessage, ViewItem, ViewMenu, WaitingBoard, WorkItem, WorkKind, WorkStatus, encode,
+    Activity, AgentLines, AgentMessage, AppBarAction, ApprovalCard, AttachmentChip, BarButton,
+    BoardAction, BoardGroup, CardAction, CardChoice, CardState, ChatAction, ChatAppBar, ChatEntry,
+    ChipKind, Composer, ComposerAction, ComposerMode, ComposerState, CowList, Delivery,
+    DetailLevel, EnterBehavior, Jump, LoadState, MentionCandidate, MentionRef, MentionSource,
+    MenuEntry, MessageNav, NavStep, NewSessionButton, Notice, OptionChip, Payload, PlanCard,
+    PlanStatus, PlanStep, PlusItem, Question, QuestionCard, QuestionForm, QuestionItem, Resolution,
+    SendIntent, SessionBar, SessionBarAction, SessionList, SessionListAction, SessionRow,
+    SessionSection, SessionStatus, SlashCommand, Tone, Transcript, TranscriptOptions,
+    TranscriptState, UnixMs, UserMessage, ViewItem, ViewMenu, WaitingBoard, WorkItem, WorkKind,
+    WorkStatus, encode,
 };
 use egui_theme_kit::controls::{IconBox, PaletteItem, icon_button, icons};
 use egui_theme_kit::kit::ButtonKind;
@@ -320,6 +321,42 @@ fn work(
     }
 }
 
+/// Path of an `[IMAGE:path]` media tag.
+fn image_path(line: &str) -> Option<&str> {
+    line.trim().strip_prefix("[IMAGE:")?.strip_suffix(']')
+}
+
+/// Draws `[IMAGE:path]` lines of agent text and tool output as picture placeholders.
+struct Pictures;
+
+impl AgentLines for Pictures {
+    fn claims(&self, line: &str) -> bool {
+        image_path(line).is_some()
+    }
+
+    fn show(&self, ui: &mut Ui, _key: &str, line: &str) {
+        let path = image_path(line).unwrap_or_default();
+        let size = vec2(ui.available_width().min(280.0), 140.0);
+        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let visuals = ui.visuals();
+        ui.painter()
+            .rect_filled(rect, 6.0, visuals.extreme_bg_color);
+        ui.painter().rect_stroke(
+            rect,
+            6.0,
+            visuals.widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("Picture \u{b7} {path}"),
+            egui::TextStyle::Small.resolve(ui.style()),
+            visuals.weak_text_color(),
+        );
+    }
+}
+
 fn json(value: serde_json::Value) -> Option<Payload<'static>> {
     Some(Payload::Json(Cow::Owned(value)))
 }
@@ -389,6 +426,16 @@ fn entries(now: UnixMs) -> Vec<ChatEntry<'static>> {
         "src/chat/transcript.rs:208:    stick_frames: u32,\nsrc/chat/transcript.rs:241:        self.stick_frames = self.stick_frames.max(frames);",
     ));
     grep.duration_ms = Some(310);
+    let mut shot = work(
+        "w-shot",
+        WorkKind::Tool,
+        "screenshot",
+        "transcript at 380 px",
+    );
+    shot.result = Some(Payload::Text(text(
+        "Captured the transcript after the jump.\n[IMAGE:/tmp/chat-380.png]\noffset 1796.5 of 1840.0",
+    )));
+    shot.duration_ms = Some(640);
 
     let mut run = work(
         "w-run",
@@ -464,16 +511,19 @@ fn entries(now: UnixMs) -> Vec<ChatEntry<'static>> {
             ),
             author: None,
             time: Some(at(41)),
-            attachments: CowList::Owned(vec![AttachmentChip {
-                name: text("ci-run-4812.log"),
-                image: None,
-                reading: false,
-            }]),
+            attachments: CowList::Owned(vec![
+                AttachmentChip::new("ci-run-4812.log"),
+                AttachmentChip {
+                    failed: true,
+                    ..AttachmentChip::new("ci-screenshot.png")
+                },
+            ]),
             delivery: Delivery::Sent,
         }),
         ChatEntry::Work(reasoning),
         ChatEntry::Work(read),
         ChatEntry::Work(grep),
+        ChatEntry::Work(shot),
         agent(
             "a-1",
             "## What I found\n\nThe test reads the scroll offset **one frame early**:\n\n1. `jump(Jump::Bottom)` only records the target.\n2. The next frame applies it, but the test asserts right after the first frame.\n3. On a slow runner the font atlas grows in between, so row heights change and the offset moves.\n\n```rust\nstate.jump(Jump::Bottom);\nlet r = run(&ctx, &mut state, &entries);\nassert!(r.at_bottom); // runs before the jump lands\n```\n\nI'll repeat the test to confirm before changing anything.",
@@ -628,11 +678,7 @@ impl ChatDemo {
             older: Some(LoadState::Available),
             transcript: TranscriptState::default(),
             composer,
-            attachments: vec![AttachmentChip {
-                name: text("scroll-trace.png"),
-                image: None,
-                reading: false,
-            }],
+            attachments: vec![AttachmentChip::new("scroll-trace.png")],
             detail: DetailLevel::Detailed,
             thinking: true,
             view: View::Chats,
@@ -951,7 +997,8 @@ impl ChatDemo {
         let mut transcript = Transcript::new("chat_demo.transcript")
             .options(options)
             .mentions(&Mentions)
-            .mention_revision(0);
+            .mention_revision(0)
+            .agent_lines(&Pictures);
         if let Some(older) = self.older {
             transcript = transcript.older(older);
         }
@@ -1098,6 +1145,14 @@ impl ChatDemo {
                     self.composer.set_wire(&wire);
                 }
             }
+            ChatAction::RetryAttachment { key, index } => {
+                if let Some(ChatEntry::User(m)) = self.entries.iter_mut().find(|e| e.key() == key)
+                    && let CowList::Owned(chips) = &mut m.attachments
+                    && let Some(chip) = chips.get_mut(index)
+                {
+                    chip.failed = false;
+                }
+            }
             ChatAction::LoadOlder => {
                 let mut all = older_entries(self.now);
                 all.append(&mut self.entries);
@@ -1171,11 +1226,7 @@ impl ChatDemo {
                 }
                 self.push_notice("Stopped the running turn".into(), Tone::Warn);
             }
-            ComposerAction::Attach => self.attachments.push(AttachmentChip {
-                name: text("notes.txt"),
-                image: None,
-                reading: false,
-            }),
+            ComposerAction::Attach => self.attachments.push(AttachmentChip::new("notes.txt")),
             ComposerAction::RemoveAttachment(i) => {
                 if i < self.attachments.len() {
                     self.attachments.remove(i);
