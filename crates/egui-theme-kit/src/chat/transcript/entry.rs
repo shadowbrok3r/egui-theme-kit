@@ -157,6 +157,8 @@ pub enum WorkStatus {
 pub enum Payload<'a> {
     Json(Cow<'a, serde_json::Value>),
     Text(CowStr<'a>),
+    /// Monospace text drawn as written, never parsed as JSON.
+    Plain(CowStr<'a>),
 }
 
 /// A file or image attached to a user message.

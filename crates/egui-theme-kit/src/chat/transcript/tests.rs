@@ -139,6 +139,8 @@ fn every_kind() -> Vec<ChatEntry<'static>> {
             context: Cow::Borrowed("SN 1 \u{b7} HOST"),
             title: Cow::Borrowed("Run a command"),
             command: Some(Cow::Borrowed("cargo test --all")),
+            copy_text: None,
+            command_max_lines: None,
             detail: Some(Payload::Text(Cow::Borrowed("{\"cwd\": \"/src\"}"))),
             reason: Some(Cow::Borrowed("Verifies the fix")),
             choices: CowList::Borrowed(&CHOICES),
@@ -149,6 +151,8 @@ fn every_kind() -> Vec<ChatEntry<'static>> {
             context: Cow::Borrowed("desk"),
             title: Cow::Borrowed("Locked"),
             command: None,
+            copy_text: None,
+            command_max_lines: None,
             detail: None,
             reason: None,
             choices: CowList::Borrowed(&CHOICES),
@@ -1176,6 +1180,8 @@ fn lock_card(state: CardState<'static>) -> [ChatEntry<'static>; 1] {
         context: Cow::Borrowed("desk"),
         title: Cow::Borrowed("Publish the crate"),
         command: None,
+        copy_text: None,
+        command_max_lines: None,
         detail: None,
         reason: None,
         choices: CowList::Borrowed(&LOCK_CHOICES),
@@ -1327,4 +1333,166 @@ fn a_locked_question_card_draws_its_buttons_disabled_with_the_reason_as_tooltip(
     assert!(!enabled && !float_button(&ctx, &cards, "Send answer").1);
     assert_eq!(reasons_on_hover(&ctx, &cards, skip), 2);
     assert!(float_click(&ctx, &cards, skip).is_empty());
+}
+
+static APPROVE_CHOICES: [CardChoice<'static>; 2] = [
+    CardChoice {
+        label: Cow::Borrowed("Approve"),
+        kind: ButtonKind::Primary,
+        shortcut: None,
+        while_locked: false,
+    },
+    CardChoice {
+        label: Cow::Borrowed("Deny"),
+        kind: ButtonKind::Danger,
+        shortcut: None,
+        while_locked: false,
+    },
+];
+
+fn approve_card(key: &'static str, command: String) -> ApprovalCard<'static> {
+    ApprovalCard {
+        key: Cow::Borrowed(key),
+        title: Cow::Borrowed("Run a command"),
+        command: Some(Cow::Owned(command)),
+        choices: CowList::Borrowed(&APPROVE_CHOICES),
+        ..ApprovalCard::default()
+    }
+}
+
+/// Text copied during one frame of floating cards.
+fn float_copies(ctx: &Context, cards: &[ChatEntry<'_>], events: Vec<egui::Event>) -> Vec<String> {
+    let raw = RawInput { events, ..input() };
+    let mut out = ctx.run_ui(raw, |ui| {
+        floating_cards(ui, "float", cards);
+    });
+    out.textures_delta.clear();
+    out.platform_output
+        .commands
+        .into_iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Clicks `at` over three frames of floating cards; returns the text copied.
+fn float_copy_click(ctx: &Context, cards: &[ChatEntry<'_>], at: Pos2) -> Vec<String> {
+    let mut copied = float_copies(ctx, cards, vec![egui::Event::PointerMoved(at)]);
+    copied.extend(float_copies(ctx, cards, vec![press(at, true)]));
+    copied.extend(float_copies(ctx, cards, vec![press(at, false)]));
+    copied
+}
+
+#[test]
+fn a_card_swapped_between_press_and_release_does_not_take_the_tap() {
+    let ctx = Context::default();
+    let first = [ChatEntry::Approval(approve_card("ap-a", "ls".into()))];
+    let second = [ChatEntry::Approval(approve_card("ap-b", "ls".into()))];
+    let (approve, _) = float_button(&ctx, &first, "Approve");
+    float_frame(&ctx, &first, vec![egui::Event::PointerMoved(approve)]);
+    float_frame(&ctx, &first, vec![press(approve, true)]);
+    let (acted, _) = float_frame(&ctx, &second, vec![press(approve, false)]);
+    assert!(acted.is_empty(), "{acted:?}");
+    assert_eq!(
+        float_click(&ctx, &second, approve),
+        vec![("ap-b".to_owned(), CardAction::Choose(0))]
+    );
+}
+
+#[test]
+fn a_command_over_its_line_cap_is_cut_with_a_toggle_and_copies_whole() {
+    let ctx = Context::default();
+    let command = (1..=20)
+        .map(|n| format!("echo {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cards = [ChatEntry::Approval(ApprovalCard {
+        command_max_lines: Some(5),
+        ..approve_card("ap-cut", command.clone())
+    })];
+    float_frame(&ctx, &cards, Vec::new());
+    let shapes = float_frame(&ctx, &cards, Vec::new()).1;
+    let cut = "echo 1\necho 2\necho 3\necho 4\n… 16 more lines";
+    assert_eq!(text_rect(&shapes, cut).len(), 1, "four lines and a note");
+    assert!(text_rect(&shapes, &command).is_empty());
+    assert!(text_rect(&shapes, SHORT_COMMAND).is_empty());
+
+    let copy = header_buttons(&ctx)[0];
+    assert_eq!(
+        float_copy_click(&ctx, &cards, copy.center()),
+        vec![command.clone()],
+        "copy takes the whole command"
+    );
+
+    let (show, _) = float_button(&ctx, &cards, SHOW_COMMAND);
+    assert!(float_click(&ctx, &cards, show).is_empty());
+    float_frame(&ctx, &cards, Vec::new());
+    let shapes = float_frame(&ctx, &cards, Vec::new()).1;
+    assert_eq!(text_rect(&shapes, &command).len(), 1, "shown whole");
+    let (less, _) = float_button(&ctx, &cards, SHORT_COMMAND);
+    float_click(&ctx, &cards, less);
+    float_frame(&ctx, &cards, Vec::new());
+    let shapes = float_frame(&ctx, &cards, Vec::new()).1;
+    assert_eq!(text_rect(&shapes, cut).len(), 1, "cut again");
+}
+
+#[test]
+fn a_command_within_its_line_cap_has_no_toggle_and_copy_text_wins() {
+    let ctx = Context::default();
+    let cards = [ChatEntry::Approval(ApprovalCard {
+        command_max_lines: Some(5),
+        copy_text: Some(Cow::Borrowed("ls -la /very/long/path")),
+        ..approve_card("ap-short", "ls -la …".into())
+    })];
+    float_frame(&ctx, &cards, Vec::new());
+    let shapes = float_frame(&ctx, &cards, Vec::new()).1;
+    assert_eq!(text_rect(&shapes, "ls -la …").len(), 1);
+    assert!(text_rect(&shapes, SHOW_COMMAND).is_empty());
+    let copy = header_buttons(&ctx)[0];
+    assert_eq!(
+        float_copy_click(&ctx, &cards, copy.center()),
+        vec!["ls -la /very/long/path".to_owned()]
+    );
+}
+
+#[test]
+fn board_cards_cut_their_command_and_show_it_whole_on_request() {
+    let ctx = Context::default();
+    let command = (1..=30)
+        .map(|n| format!("step {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cards = [ChatEntry::Approval(ApprovalCard {
+        command_max_lines: Some(12),
+        ..approve_card("ap-board", command.clone())
+    })];
+    let groups = [BoardGroup {
+        session: 1u32,
+        header: Cow::Borrowed("Engine"),
+        subtitle: Cow::Borrowed(""),
+        status: crate::chat::types::SessionStatus::Waiting,
+        cards: &cards,
+    }];
+    let frame = |events: Vec<egui::Event>| {
+        let raw = RawInput { events, ..input() };
+        let mut action = None;
+        let mut out = ctx.run_ui(raw, |ui| {
+            action = WaitingBoard::new("board", &groups).show(ui);
+        });
+        out.textures_delta.clear();
+        (action, out.shapes)
+    };
+    frame(Vec::new());
+    let shapes = frame(Vec::new()).1;
+    assert!(text_rect(&shapes, &command).is_empty());
+    let show = text_rect(&shapes, SHOW_COMMAND)[0].center();
+    frame(vec![egui::Event::PointerMoved(show)]);
+    frame(vec![press(show, true)]);
+    assert!(frame(vec![press(show, false)]).0.is_none());
+    frame(Vec::new());
+    let shapes = frame(Vec::new()).1;
+    assert_eq!(text_rect(&shapes, &command).len(), 1);
+    assert!(!text_rect(&shapes, "Approve").is_empty());
 }

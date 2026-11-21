@@ -51,6 +51,10 @@ pub(crate) fn show(
                 }
             }
         },
+        Payload::Plain(text) => {
+            let ink = rc.p.text;
+            mono_text(ui, rc, text, ink, id);
+        }
     }
 }
 
@@ -198,5 +202,26 @@ mod tests {
             });
             out.textures_delta.clear();
         }
+    }
+
+    #[test]
+    fn plain_text_that_reads_as_json_draws_as_written() {
+        let ctx = egui::Context::default();
+        let text = "{\"steer\": [1, 2]}";
+        let mut drawn = false;
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                let mut rc = RowCx::new(ui, Id::unique("plain-test"));
+                let id = rc.id;
+                let payload = Payload::Plain(Cow::Borrowed(text));
+                show(ui, &mut rc, &payload, id, Part::Detail, None);
+            });
+            out.textures_delta.clear();
+            drawn = out.shapes.iter().any(|c| match &c.shape {
+                egui::Shape::Text(t) => t.galley.text() == text,
+                _ => false,
+            });
+        }
+        assert!(drawn, "the text is drawn whole, not as a tree");
     }
 }
