@@ -1404,7 +1404,7 @@ fn a_card_swapped_between_press_and_release_does_not_take_the_tap() {
 #[test]
 fn a_command_over_its_line_cap_is_cut_with_a_toggle_and_copies_whole() {
     let ctx = Context::default();
-    let command = (1..=20)
+    let command = (1..=8)
         .map(|n| format!("echo {n}"))
         .collect::<Vec<_>>()
         .join("\n");
@@ -1414,7 +1414,7 @@ fn a_command_over_its_line_cap_is_cut_with_a_toggle_and_copies_whole() {
     })];
     float_frame(&ctx, &cards, Vec::new());
     let shapes = float_frame(&ctx, &cards, Vec::new()).1;
-    let cut = "echo 1\necho 2\necho 3\necho 4\n… 16 more lines";
+    let cut = "echo 1\necho 2\necho 3\necho 4\n… 4 more lines";
     assert_eq!(text_rect(&shapes, cut).len(), 1, "four lines and a note");
     assert!(text_rect(&shapes, &command).is_empty());
     assert!(text_rect(&shapes, SHORT_COMMAND).is_empty());
