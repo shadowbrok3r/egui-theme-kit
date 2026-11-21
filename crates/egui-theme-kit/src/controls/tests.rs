@@ -1547,15 +1547,26 @@ fn typing_filters_the_palette_and_escape_closes_it() {
     assert!(!state.is_open());
 }
 
+/// A touch event that marks the input as coming from a touch screen.
+fn touch_seen() -> Event {
+    Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Cancel,
+        pos: Pos2::ZERO,
+        force: None,
+    }
+}
+
 #[test]
-fn the_palette_focuses_its_query_on_open_and_leaves_a_surrendered_focus_alone() {
+fn on_touch_the_palette_focuses_its_query_on_open_and_leaves_a_surrendered_focus_alone() {
     let ctx = context(Density::Regular);
     let items = palette_items();
     let query = CommandPalette::new().query_id();
     let focused = || ctx.memory(|m| m.has_focus(query));
     let mut state = CommandPaletteState::new();
     state.open();
-    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, vec![touch_seen()]);
     palette_frame(&ctx, &mut state, &items, Vec::new());
     assert!(focused(), "opening focuses the query");
     ctx.memory_mut(|m| m.surrender_focus(query));
@@ -1573,13 +1584,35 @@ fn the_palette_focuses_its_query_on_open_and_leaves_a_surrendered_focus_alone() 
 }
 
 #[test]
-fn back_closes_the_palette_like_escape() {
+fn without_touch_a_click_on_the_palette_padding_keeps_typing_in_the_query() {
     let ctx = context(Density::Regular);
     let items = palette_items();
     let query = CommandPalette::new().query_id();
     let mut state = CommandPaletteState::new();
     state.open();
     palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    let field = ctx.read_response(query).expect("the query drawn").rect;
+    // Left padding of the query row, before the search icon.
+    let padding = pos2(field.left() - 12.0, field.center().y);
+    click_at(&ctx, padding, |ui| {
+        let _ = CommandPalette::new().show(ui.ctx(), &mut state, &items);
+    });
+    assert!(state.is_open(), "a click inside the palette keeps it open");
+    palette_frame(&ctx, &mut state, &items, Vec::new());
+    palette_frame(&ctx, &mut state, &items, vec![Event::Text("sett".into())]);
+    assert!(ctx.memory(|m| m.has_focus(query)));
+    assert_eq!(state.query, "sett");
+}
+
+#[test]
+fn back_closes_the_palette_like_escape() {
+    let ctx = context(Density::Regular);
+    let items = palette_items();
+    let query = CommandPalette::new().query_id();
+    let mut state = CommandPaletteState::new();
+    state.open();
+    palette_frame(&ctx, &mut state, &items, vec![touch_seen()]);
     palette_frame(&ctx, &mut state, &items, vec![Event::Text("sett".into())]);
     ctx.memory_mut(|m| m.surrender_focus(query));
     palette_frame(&ctx, &mut state, &items, Vec::new());

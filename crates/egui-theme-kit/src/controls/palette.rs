@@ -465,7 +465,7 @@ impl<'a> CommandPalette<'a> {
         self
     }
 
-    /// The id of the query field, focused when the palette opens.
+    /// The id of the query field, focused when the palette opens and kept focused without touch.
     pub fn query_id(&self) -> Id {
         self.id.with("query")
     }
@@ -600,7 +600,7 @@ impl<'a> CommandPalette<'a> {
         id
     }
 
-    /// The search icon and query editor, focused when `opening`; returns whether the query changed.
+    /// The search icon and query editor, focused when `opening` or every frame without touch; returns whether the query changed.
     fn query_row(
         &self,
         ui: &mut Ui,
@@ -641,7 +641,8 @@ impl<'a> CommandPalette<'a> {
             .min_size(text_rect.size())
             .align(Align2::LEFT_CENTER)
             .show(&mut child);
-        if opening {
+        let touch = ui.input(|i| i.has_touch_screen());
+        if opening || (!touch && !output.response.has_focus()) {
             output.response.request_focus();
         }
         output.response.changed()
