@@ -155,6 +155,7 @@ mod tests {
             label: Cow::Borrowed("Approve"),
             kind: ButtonKind::Primary,
             shortcut: Some(Cow::Borrowed("Y")),
+            while_locked: false,
         }];
         let cards = [ChatEntry::Approval(ApprovalCard {
             key: Cow::Borrowed("a1"),

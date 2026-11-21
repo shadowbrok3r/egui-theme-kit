@@ -58,11 +58,13 @@ static CHOICES: [CardChoice<'static>; 2] = [
         label: Cow::Borrowed("Approve"),
         kind: ButtonKind::Primary,
         shortcut: Some(Cow::Borrowed("Y")),
+        while_locked: false,
     },
     CardChoice {
         label: Cow::Borrowed("Deny"),
         kind: ButtonKind::Danger,
         shortcut: None,
+        while_locked: false,
     },
 ];
 
@@ -1143,4 +1145,186 @@ fn transcript_thumbnails_crop_to_a_centred_square() {
             Pos2::new(1.0, 0.75)
         ))
     );
+}
+
+const LOCK_REASON: &str = "Only the release owner can run this";
+
+static LOCK_CHOICES: [CardChoice<'static>; 3] = [
+    CardChoice {
+        label: Cow::Borrowed("Run"),
+        kind: ButtonKind::Primary,
+        shortcut: Some(Cow::Borrowed("Y")),
+        while_locked: false,
+    },
+    CardChoice {
+        label: Cow::Borrowed("Deny"),
+        kind: ButtonKind::Danger,
+        shortcut: None,
+        while_locked: false,
+    },
+    CardChoice {
+        label: Cow::Borrowed("Dismiss"),
+        kind: ButtonKind::Ghost,
+        shortcut: Some(Cow::Borrowed("D")),
+        while_locked: true,
+    },
+];
+
+fn lock_card(state: CardState<'static>) -> [ChatEntry<'static>; 1] {
+    [ChatEntry::Approval(ApprovalCard {
+        key: Cow::Borrowed("ap-lock"),
+        context: Cow::Borrowed("desk"),
+        title: Cow::Borrowed("Publish the crate"),
+        command: None,
+        detail: None,
+        reason: None,
+        choices: CowList::Borrowed(&LOCK_CHOICES),
+        state,
+    })]
+}
+
+fn locked() -> CardState<'static> {
+    CardState::Locked {
+        reason: Cow::Borrowed(LOCK_REASON),
+    }
+}
+
+/// A context that shows tooltips without delay.
+fn tooltip_ctx() -> Context {
+    let ctx = Context::default();
+    ctx.all_styles_mut(|s| {
+        s.interaction.tooltip_delay = 0.0;
+        s.interaction.show_tooltips_only_when_still = false;
+    });
+    ctx
+}
+
+/// Centre of the button labelled `label` and whether it was enabled last frame.
+fn float_button(ctx: &Context, cards: &[ChatEntry<'_>], label: &str) -> (Pos2, bool) {
+    let shapes = float_frame(ctx, cards, Vec::new()).1;
+    let at = text_rect(&shapes, label)
+        .first()
+        .unwrap_or_else(|| panic!("{label} is drawn"))
+        .center();
+    let enabled = ctx.viewport(|v| {
+        v.prev_pass
+            .widgets
+            .layers()
+            .flat_map(|(_, w)| w.iter())
+            .filter(|w| w.sense.senses_click() && w.rect.contains(at))
+            .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+            .map(|w| w.enabled)
+    });
+    (at, enabled.unwrap_or_else(|| panic!("{label} is a button")))
+}
+
+/// Times the lock reason is painted while the pointer rests on `at`.
+fn reasons_on_hover(ctx: &Context, cards: &[ChatEntry<'_>], at: Pos2) -> usize {
+    let mut shapes = Vec::new();
+    for _ in 0..3 {
+        shapes = float_frame(ctx, cards, vec![egui::Event::PointerMoved(at)]).1;
+    }
+    text_rect(&shapes, LOCK_REASON).len()
+}
+
+fn key_press(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+#[test]
+fn a_locked_card_draws_its_choices_disabled_with_the_reason_as_tooltip() {
+    let ctx = tooltip_ctx();
+    let cards = lock_card(locked());
+    float_frame(&ctx, &cards, Vec::new());
+    let shapes = float_frame(&ctx, &cards, Vec::new()).1;
+    assert_eq!(text_rect(&shapes, LOCK_REASON).len(), 1, "reason line kept");
+    let (run, run_on) = float_button(&ctx, &cards, "Run");
+    let (_, deny_on) = float_button(&ctx, &cards, "Deny");
+    assert!(!run_on && !deny_on, "locked choices draw disabled");
+    assert_eq!(
+        reasons_on_hover(&ctx, &cards, run),
+        2,
+        "reason line and tooltip"
+    );
+    assert!(
+        float_click(&ctx, &cards, run).is_empty(),
+        "a disabled choice does nothing"
+    );
+    float_frame(&ctx, &cards, vec![egui::Event::PointerMoved(run)]);
+    assert!(
+        float_frame(&ctx, &cards, vec![key_press(egui::Key::Y)])
+            .0
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_while_locked_choice_stays_usable_and_keeps_its_index() {
+    let ctx = tooltip_ctx();
+    let cards = lock_card(locked());
+    float_frame(&ctx, &cards, Vec::new());
+    let (dismiss, enabled) = float_button(&ctx, &cards, "Dismiss");
+    assert!(enabled);
+    assert_eq!(reasons_on_hover(&ctx, &cards, dismiss), 1, "no tooltip");
+    assert_eq!(
+        float_frame(&ctx, &cards, vec![key_press(egui::Key::D)]).0,
+        vec![("ap-lock".to_owned(), CardAction::Choose(2))]
+    );
+    assert_eq!(
+        float_click(&ctx, &cards, dismiss),
+        vec![("ap-lock".to_owned(), CardAction::Choose(2))]
+    );
+}
+
+#[test]
+fn an_unlocked_card_keeps_every_choice_and_index() {
+    let ctx = tooltip_ctx();
+    let cards = lock_card(CardState::Open);
+    float_frame(&ctx, &cards, Vec::new());
+    for label in ["Run", "Deny", "Dismiss"] {
+        assert!(float_button(&ctx, &cards, label).1, "{label} is enabled");
+    }
+    let (run, _) = float_button(&ctx, &cards, "Run");
+    assert_eq!(reasons_on_hover(&ctx, &cards, run), 0);
+    assert_eq!(
+        float_click(&ctx, &cards, run),
+        vec![("ap-lock".to_owned(), CardAction::Choose(0))]
+    );
+    let (dismiss, _) = float_button(&ctx, &cards, "Dismiss");
+    assert_eq!(
+        float_click(&ctx, &cards, dismiss),
+        vec![("ap-lock".to_owned(), CardAction::Choose(2))]
+    );
+}
+
+#[test]
+fn a_locked_question_card_draws_its_buttons_disabled_with_the_reason_as_tooltip() {
+    let ctx = tooltip_ctx();
+    let cards = [ChatEntry::Question(QuestionCard {
+        key: Cow::Borrowed("q-lock"),
+        context: Cow::Borrowed("desk"),
+        header: None,
+        why: None,
+        questions: CowList::Owned(vec![Question {
+            id: Cow::Borrowed("why"),
+            prompt: Cow::Borrowed("Why publish now?"),
+            form: QuestionForm::Text,
+            items: CowList::default(),
+            free_text: false,
+            header: None,
+            why: None,
+        }]),
+        state: locked(),
+    })];
+    float_frame(&ctx, &cards, Vec::new());
+    let (skip, enabled) = float_button(&ctx, &cards, "Skip");
+    assert!(!enabled && !float_button(&ctx, &cards, "Send answer").1);
+    assert_eq!(reasons_on_hover(&ctx, &cards, skip), 2);
+    assert!(float_click(&ctx, &cards, skip).is_empty());
 }
