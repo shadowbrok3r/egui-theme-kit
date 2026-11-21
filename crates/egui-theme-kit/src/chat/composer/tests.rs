@@ -1486,3 +1486,85 @@ fn a_flick_on_the_focused_text_coasts_after_it_lifts() {
     h.release(h.state.touch.view.center());
     assert!(!h.state.touch.coasting);
 }
+
+impl Harness {
+    /// Focuses the touch text, flicks it down and lifts; returns the cursor before the flick.
+    fn flick(&mut self) -> Option<(usize, usize)> {
+        self.tap(self.state.touch.view.center());
+        self.idle(3);
+        let before = self.cursor();
+        let p = self.state.touch.view.center() - vec2(0.0, 40.0);
+        self.press(p);
+        for dy in [30.0, 60.0, 90.0] {
+            self.drag_to(p + vec2(0.0, dy));
+        }
+        self.release(p + vec2(0.0, 90.0));
+        assert!(self.state.touch.coasting);
+        before
+    }
+}
+
+#[test]
+fn a_flick_that_rests_before_lifting_does_not_coast() {
+    let mut h = Harness::touch(&long_text());
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let p = h.state.touch.view.center() - vec2(0.0, 40.0);
+    h.press(p);
+    for dy in [30.0, 60.0, 90.0] {
+        h.drag_to(p + vec2(0.0, dy));
+    }
+    h.time = h.time.map(|t| t + 1.0);
+    h.release(p + vec2(0.0, 90.0));
+    assert!(!h.state.touch.coasting);
+}
+
+#[test]
+fn a_slow_drift_past_the_slop_barely_coasts() {
+    let mut h = Harness::touch(&long_text());
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    let p = h.state.touch.view.center();
+    h.press(p);
+    h.idle(15);
+    h.drag_to(p + vec2(0.0, 8.0));
+    assert_eq!(h.state.touch.gesture, Gesture::Scrolling);
+    let lifted = h.state.touch.scroll_y;
+    h.release(p + vec2(0.0, 8.0));
+    h.idle(60);
+    assert!(
+        (lifted - h.state.touch.scroll_y).abs() < 15.0,
+        "{lifted} -> {}",
+        h.state.touch.scroll_y
+    );
+}
+
+#[test]
+fn a_tap_during_a_coast_stops_it_and_keeps_the_cursor() {
+    let mut h = Harness::touch(&long_text());
+    let before = h.flick();
+    h.idle(2);
+    let p = h.state.touch.view.center();
+    h.tap(p);
+    assert!(!h.state.touch.coasting);
+    h.idle(2);
+    assert_eq!(h.cursor(), before);
+    assert!(h.state.touch.last_tap.is_none());
+}
+
+#[test]
+fn a_cancelled_press_is_not_a_tap() {
+    let text = long_text();
+    let len = text.chars().count();
+    let mut h = Harness::touch(&text);
+    h.tap(h.state.touch.view.center());
+    h.idle(3);
+    assert_eq!(h.cursor(), Some((len, len)));
+    let p = h.state.touch.view.center();
+    h.press(p);
+    h.frame(vec![finger(TouchPhase::Cancel, p), Event::PointerGone]);
+    h.idle(2);
+    assert_eq!(h.cursor(), Some((len, len)));
+    assert!(h.state.touch.last_tap.is_none());
+    assert_eq!(h.state.touch.gesture, Gesture::Idle);
+}
