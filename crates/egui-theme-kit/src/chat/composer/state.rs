@@ -158,6 +158,12 @@ impl ComposerState {
         self.picked.contains(&key_of(target))
     }
 
+    /// Cancels the focus the text edit would take back after the `+` menu closes.
+    pub fn release_focus(&mut self) {
+        self.refocus = false;
+        self.refocus_again = false;
+    }
+
     pub(super) fn char_len(&self) -> usize {
         self.text.chars().count()
     }
@@ -202,6 +208,17 @@ impl ComposerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn released_focus_is_not_taken_back() {
+        let mut state = ComposerState {
+            refocus: true,
+            refocus_again: true,
+            ..ComposerState::default()
+        };
+        state.release_focus();
+        assert!(!state.refocus && !state.refocus_again);
+    }
 
     #[test]
     fn wire_round_trips_through_the_buffer() {
