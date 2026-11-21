@@ -156,12 +156,16 @@ pub struct QuestionItem<'a> {
 }
 
 /// The agent's step list.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PlanCard<'a> {
     pub key: CowStr<'a>,
     pub title: Option<CowStr<'a>>,
     pub explanation: Option<CowStr<'a>>,
     pub steps: CowList<'a, PlanStep<'a>>,
+    /// Tooltip of a close button in the header; tapping it reports [`CardAction::Dismiss`] for `key`.
+    pub dismiss: Option<CowStr<'a>>,
+    /// Fold state the card starts in, `None` for open; a new `key` or a changed value resets the user's fold.
+    pub open: Option<bool>,
 }
 
 /// One step of a plan.
@@ -354,6 +358,8 @@ struct Head<'h> {
     tone: Tone,
     kind: &'h str,
     context: &'h str,
+    /// Width kept clear at the right end for header buttons.
+    trail: f32,
 }
 
 fn header(ui: &mut Ui, rc: &RowCx<'_>, head: &Head<'_>) {
@@ -362,9 +368,11 @@ fn header(ui: &mut Ui, rc: &RowCx<'_>, head: &Head<'_>) {
         tone,
         kind,
         context,
+        trail,
     } = *head;
     let h = RowCx::row_h(ui, &rc.f.small).max(rc.m.icon_sm);
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+    let (full, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+    let rect = full.with_max_x((full.right() - trail).max(full.left()));
     let painter = ui.painter();
     let slot = Rect::from_min_size(rect.left_top(), Vec2::new(rc.m.icon_sm, h));
     icon.paint(ui, slot, rc.m.icon_sm, tone.color(&rc.p));
@@ -430,6 +438,7 @@ pub(crate) fn approval(
             tone: Tone::Warn,
             kind: "Approval",
             context: &card.context,
+            trail: 0.0,
         },
         |ui, rc| {
             let title_font = rc.f.strong.clone();
@@ -504,6 +513,7 @@ pub(crate) fn question(
             tone: Tone::Info,
             kind: "Question",
             context: &card.context,
+            trail: 0.0,
         },
         |ui, rc| {
             if let Some(header) = &card.header {
@@ -738,13 +748,58 @@ fn paint_mark(ui: &Ui, rc: &RowCx<'_>, slot: Rect, single: bool, on: bool) {
     }
 }
 
-/// Draws a plan card; it folds to its current step.
-pub(crate) fn plan(ui: &mut Ui, rc: &mut RowCx<'_>, card: &PlanCard<'_>, view: Id) {
+/// A plan card's fold and the `open` value it was last reset to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlanFold {
+    open: bool,
+    seed: Option<bool>,
+}
+
+impl PlanFold {
+    /// The stored fold, reset to `seed` when the app's starting state changed.
+    fn resolve(stored: Option<Self>, seed: Option<bool>) -> Self {
+        match stored {
+            Some(fold) if fold.seed == seed => fold,
+            _ => Self {
+                open: seed.unwrap_or(true),
+                seed,
+            },
+        }
+    }
+}
+
+/// An icon button `slot` boxes in from the right end of the header row.
+fn header_button(
+    ui: &mut Ui,
+    rc: &RowCx<'_>,
+    slot: usize,
+    icon: Icon,
+    tip: &str,
+) -> egui::Response {
+    let side = IconBox::Sm.side(&rc.m);
+    let step = side + rc.m.gap.x / 4.0;
+    let right_top = ui.min_rect().right_top() - vec2(side + step * slot as f32, 0.0);
+    ui.place(
+        Rect::from_min_size(right_top, Vec2::splat(side)),
+        |ui: &mut Ui| IconButton::new(icon, IconBox::Sm).tip(tip).show(ui),
+    )
+}
+
+/// Draws a plan card that folds to its current step; returns [`CardAction::Dismiss`] when closed.
+pub(crate) fn plan(
+    ui: &mut Ui,
+    rc: &mut RowCx<'_>,
+    card: &PlanCard<'_>,
+    view: Id,
+) -> Option<CardAction> {
     let key = card.key.as_ref();
     let open_id = view.with((key, "plan_open"));
-    let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
+    let mut fold = PlanFold::resolve(ui.data(|d| d.get_temp::<PlanFold>(open_id)), card.open);
     let title = card.title.as_deref().unwrap_or("Plan");
     let progress = plan_progress(card);
+    let buttons = 1 + usize::from(card.dismiss.is_some());
+    let side = IconBox::Sm.side(&rc.m);
+    let mut action = None;
     let _ = frame(
         ui,
         rc,
@@ -754,28 +809,31 @@ pub(crate) fn plan(ui: &mut Ui, rc: &mut RowCx<'_>, card: &PlanCard<'_>, view: I
             tone: Tone::Accent,
             kind: title,
             context: &progress,
+            trail: buttons as f32 * (side + rc.m.gap.x / 4.0),
         },
         |ui, rc| {
-            let chevron = if open {
+            let chevron = if fold.open {
                 rc.icons.chevron_up
             } else {
                 rc.icons.chevron_down
             };
-            let toggle = ui.place(
-                Rect::from_min_size(
-                    ui.min_rect().right_top() - vec2(IconBox::Sm.side(&rc.m), 0.0),
-                    Vec2::splat(IconBox::Sm.side(&rc.m)),
-                ),
-                |ui: &mut Ui| {
-                    IconButton::new(chevron, IconBox::Sm)
-                        .tip(if open { "Fold" } else { "Unfold" })
-                        .show(ui)
-                },
+            let toggle = header_button(
+                ui,
+                rc,
+                0,
+                chevron,
+                if fold.open { "Fold" } else { "Unfold" },
             );
             if rc.tapped(&toggle) {
-                open = !open;
+                fold.open = !fold.open;
             }
-            if !open {
+            if let Some(tip) = &card.dismiss {
+                let close = header_button(ui, rc, 1, rc.icons.close, tip);
+                if rc.tapped(&close) {
+                    action = Some(CardAction::Dismiss);
+                }
+            }
+            if !fold.open {
                 if let Some(step) = card.current() {
                     step_row(ui, rc, step);
                 }
@@ -790,7 +848,8 @@ pub(crate) fn plan(ui: &mut Ui, rc: &mut RowCx<'_>, card: &PlanCard<'_>, view: I
             }
         },
     );
-    ui.data_mut(|d| d.insert_temp(open_id, open));
+    ui.data_mut(|d| d.insert_temp(open_id, fold));
+    action
 }
 
 fn step_row(ui: &mut Ui, rc: &RowCx<'_>, step: &PlanStep<'_>) {
@@ -844,10 +903,7 @@ pub(crate) fn entry_card(
     match entry {
         ChatEntry::Approval(card) => approval(ui, rc, card, view),
         ChatEntry::Question(card) => question(ui, rc, card, view),
-        ChatEntry::Plan(card) => {
-            plan(ui, rc, card, view);
-            None
-        }
+        ChatEntry::Plan(card) => plan(ui, rc, card, view),
         _ => None,
     }
 }
@@ -1115,6 +1171,7 @@ mod tests {
                 step("fix", PlanStatus::InProgress),
                 step("verify", PlanStatus::Pending),
             ]),
+            ..PlanCard::default()
         };
         assert_eq!(plan_progress(&plan), "1 of 3 done");
         assert_eq!(plan.current().map(|s| s.text.as_ref()), Some("fix"));

@@ -572,6 +572,8 @@ fn entries(now: UnixMs) -> Vec<ChatEntry<'static>> {
                     status: PlanStatus::Pending,
                 },
             ]),
+            dismiss: Some(text("Hide plan")),
+            open: None,
         }),
         ChatEntry::Work(patch),
         ChatEntry::Work(rerun),
@@ -1166,6 +1168,13 @@ impl ChatDemo {
         let Some(entry) = self.entries.iter_mut().find(|e| e.key() == key) else {
             return;
         };
+        if matches!(
+            (&*entry, &action),
+            (ChatEntry::Plan(_), CardAction::Dismiss)
+        ) {
+            self.entries.retain(|e| e.key() != key);
+            return;
+        }
         let done = |outcome: &str, tone| CardState::Done {
             outcome: outcome.to_owned().into(),
             tone,

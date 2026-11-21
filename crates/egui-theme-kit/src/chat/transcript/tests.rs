@@ -6,7 +6,7 @@ use egui::{Context, Pos2, RawInput, Rect, vec2};
 
 use super::*;
 use crate::chat::mention::{MentionRef, encode};
-use crate::chat::types::{CowList, Tone};
+use crate::chat::types::{CardAction, CowList, Tone};
 use crate::kit::ButtonKind;
 
 fn input() -> RawInput {
@@ -194,6 +194,8 @@ fn every_kind() -> Vec<ChatEntry<'static>> {
                     status: PlanStatus::Pending,
                 },
             ]),
+            dismiss: Some(Cow::Borrowed("Hide plan")),
+            open: None,
         }),
         ChatEntry::Custom {
             key: Cow::Borrowed("c0"),
@@ -986,4 +988,159 @@ fn custom_rows_see_the_tap_that_stops_a_fling_as_suppressed() {
     assert!(!state.tap_suppressed());
     assert_eq!(taps.len(), 2, "{taps:?}");
     assert!(!taps[1].1, "a tap at rest is suppressed: {taps:?}");
+}
+
+fn plan_card(
+    key: &'static str,
+    dismiss: Option<&'static str>,
+    open: Option<bool>,
+) -> ChatEntry<'static> {
+    let step = |text, status| PlanStep {
+        text: Cow::Borrowed(text),
+        status,
+    };
+    ChatEntry::Plan(PlanCard {
+        key: Cow::Borrowed(key),
+        steps: CowList::Owned(vec![
+            step("Scan", PlanStatus::Completed),
+            step("Fix", PlanStatus::InProgress),
+            step("Verify", PlanStatus::Pending),
+        ]),
+        dismiss: dismiss.map(Cow::Borrowed),
+        open,
+        ..PlanCard::default()
+    })
+}
+
+/// One frame of floating cards; returns the actions and painted shapes.
+fn float_frame(
+    ctx: &Context,
+    cards: &[ChatEntry<'_>],
+    events: Vec<egui::Event>,
+) -> (Vec<(String, CardAction)>, Vec<egui::epaint::ClippedShape>) {
+    let mut actions = Vec::new();
+    let raw = RawInput { events, ..input() };
+    let mut out = ctx.run_ui(raw, |ui| actions = floating_cards(ui, "float", cards));
+    out.textures_delta.clear();
+    (actions, out.shapes)
+}
+
+/// Clickable small icon buttons drawn last frame, left to right.
+fn header_buttons(ctx: &Context) -> Vec<Rect> {
+    let side = crate::controls::IconBox::Sm.side(&crate::controls::Metrics::get(ctx));
+    let mut out: Vec<Rect> = ctx.viewport(|v| {
+        v.prev_pass
+            .widgets
+            .layers()
+            .flat_map(|(_, w)| w.iter())
+            .filter(|w| w.sense.senses_click() && (w.rect.width() - side).abs() < 0.5)
+            .map(|w| w.rect)
+            .collect()
+    });
+    out.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    out
+}
+
+/// Clicks `at` over three frames; returns the actions reported.
+fn float_click(ctx: &Context, cards: &[ChatEntry<'_>], at: Pos2) -> Vec<(String, CardAction)> {
+    let mut acted = float_frame(ctx, cards, vec![egui::Event::PointerMoved(at)]).0;
+    acted.extend(float_frame(ctx, cards, vec![press(at, true)]).0);
+    acted.extend(float_frame(ctx, cards, vec![press(at, false)]).0);
+    acted
+}
+
+#[test]
+fn a_plan_close_button_sits_left_of_the_fold_and_reports_dismiss() {
+    let ctx = Context::default();
+    let plain = [plan_card("p-plain", None, None)];
+    float_frame(&ctx, &plain, Vec::new());
+    float_frame(&ctx, &plain, Vec::new());
+    assert_eq!(header_buttons(&ctx).len(), 1, "fold only");
+
+    let cards = [plan_card("p-close", Some("Hide plan"), None)];
+    float_frame(&ctx, &cards, Vec::new());
+    let (_, shapes) = float_frame(&ctx, &cards, Vec::new());
+    let buttons = header_buttons(&ctx);
+    assert_eq!(buttons.len(), 2, "{buttons:?}");
+    let (close, fold) = (buttons[0], buttons[1]);
+    assert!(close.right() <= fold.left(), "{close:?} {fold:?}");
+    assert_eq!(close.top(), fold.top());
+    let title = text_rect(&shapes, "Plan")[0];
+    assert!(title.bottom() > close.top() && title.top() < close.bottom());
+    assert_eq!(
+        float_click(&ctx, &cards, close.center()),
+        vec![("p-close".to_owned(), CardAction::Dismiss)]
+    );
+    assert!(float_click(&ctx, &cards, fold.center()).is_empty());
+}
+
+#[test]
+fn a_plan_starts_in_its_open_state_and_resets_on_a_new_key_or_value() {
+    let ctx = Context::default();
+    let shows = |cards: &[ChatEntry<'_>]| {
+        let (_, shapes) = float_frame(&ctx, cards, Vec::new());
+        ["Scan", "Fix", "Verify"].map(|t| !text_rect(&shapes, t).is_empty())
+    };
+    let open = [true, true, true];
+    let folded = [false, true, false];
+
+    assert_eq!(shows(&[plan_card("p-1", None, None)]), open);
+    assert_eq!(shows(&[plan_card("p-1", None, Some(false))]), folded);
+
+    let running = [plan_card("p-1", None, Some(true))];
+    assert_eq!(shows(&running), open);
+    let fold = header_buttons(&ctx)[0];
+    float_click(&ctx, &running, fold.center());
+    assert_eq!(shows(&running), folded, "the user's fold holds");
+    assert_eq!(shows(&running), folded);
+
+    let finished = [plan_card("p-1", None, Some(false))];
+    assert_eq!(shows(&finished), folded);
+    let fold = header_buttons(&ctx)[0];
+    float_click(&ctx, &finished, fold.center());
+    assert_eq!(shows(&finished), open, "unfolding a finished plan holds");
+
+    assert_eq!(shows(&[plan_card("p-2", None, Some(false))]), folded);
+    assert_eq!(shows(&[plan_card("p-3", None, None)]), open);
+}
+
+#[test]
+fn transcript_thumbnails_crop_to_a_centred_square() {
+    let ctx = Context::default();
+    let image = egui::ColorImage::filled([30, 60], egui::Color32::BLUE);
+    let tall = ctx.load_texture("tall", image, egui::TextureOptions::default());
+    let entries = vec![ChatEntry::User(UserMessage {
+        key: Cow::Borrowed("u-t"),
+        text: Cow::Borrowed("look"),
+        author: None,
+        time: None,
+        attachments: CowList::Owned(vec![AttachmentChip {
+            image: Some(tall.id()),
+            ..AttachmentChip::new("tall.png")
+        }]),
+        delivery: Delivery::Sent,
+    })];
+    let mut state = TranscriptState::default();
+    let mut uv = None;
+    for _ in 0..2 {
+        let mut out = ctx.run_ui(input(), |ui| {
+            Transcript::new("thumbs").show(ui, &mut state, &entries, |_, _| {});
+        });
+        out.textures_delta.clear();
+        uv = out.shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Rect(r) => r
+                .brush
+                .as_ref()
+                .filter(|b| b.fill_texture_id == tall.id())
+                .map(|b| b.uv),
+            _ => None,
+        });
+    }
+    assert_eq!(
+        uv,
+        Some(Rect::from_min_max(
+            Pos2::new(0.0, 0.25),
+            Pos2::new(1.0, 0.75)
+        ))
+    );
 }

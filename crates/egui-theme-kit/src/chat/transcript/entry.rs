@@ -181,3 +181,19 @@ impl<'a> AttachmentChip<'a> {
         }
     }
 }
+
+/// UV rect cropping `texture` to its centred square; the whole texture when its size is unknown.
+pub(crate) fn cover_uv(ctx: &egui::Context, texture: TextureId) -> egui::Rect {
+    let size = ctx.tex_manager().read().meta(texture).map(|m| m.size);
+    match size {
+        Some([w, h]) if w > 0 && h > 0 => square_uv(w as f32, h as f32),
+        _ => egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+    }
+}
+
+/// UV rect of the centred square of a `w` by `h` image.
+fn square_uv(w: f32, h: f32) -> egui::Rect {
+    let side = w.min(h);
+    let (u, v) = ((1.0 - side / w) / 2.0, (1.0 - side / h) / 2.0);
+    egui::Rect::from_min_max(egui::pos2(u, v), egui::pos2(1.0 - u, 1.0 - v))
+}

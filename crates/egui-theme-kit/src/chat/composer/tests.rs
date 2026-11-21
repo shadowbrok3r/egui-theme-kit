@@ -106,6 +106,7 @@ struct Harness {
     editable: bool,
     activity: Activity,
     blocked: Option<&'static str>,
+    stop_blocked: Option<&'static str>,
     raw: Option<RawInput>,
     height: f32,
     /// Clock of the next frame; `None` lets egui advance it.
@@ -123,6 +124,7 @@ impl Harness {
             editable: true,
             activity: Activity::Idle,
             blocked: None,
+            stop_blocked: None,
             raw: None,
             height: 600.0,
             time: None,
@@ -147,8 +149,13 @@ impl Harness {
             *t += 1.0 / 60.0;
         }
         let mut response = None;
-        let (enter, editable, activity, blocked) =
-            (self.enter, self.editable, self.activity, self.blocked);
+        let (enter, editable, activity, blocked, stop_blocked) = (
+            self.enter,
+            self.editable,
+            self.activity,
+            self.blocked,
+            self.stop_blocked,
+        );
         let state = &mut self.state;
         let mentions = candidates;
         let slash = commands;
@@ -164,6 +171,7 @@ impl Harness {
                     editable,
                     activity,
                     send_blocked: blocked.map(Into::into),
+                    stop_blocked: stop_blocked.map(Into::into),
                 });
             if has_clip {
                 composer = composer.clipboard(&read);
@@ -665,6 +673,7 @@ impl Harness {
             editable: true,
             activity: Activity::Idle,
             blocked: None,
+            stop_blocked: None,
             raw: None,
             height: 600.0,
             time: Some(0.0),
@@ -997,4 +1006,165 @@ fn paste_without_a_clipboard_reader_asks_the_integration() {
         .iter()
         .any(|c| matches!(c, egui::ViewportCommand::RequestPaste));
     assert!(asked);
+}
+
+/// Clickable square widgets `side` wide drawn last frame, left to right, with whether each is enabled.
+fn squares(ctx: &Context, side: f32) -> Vec<(Rect, bool)> {
+    let mut out: Vec<(Rect, bool)> = ctx.viewport(|v| {
+        v.prev_pass
+            .widgets
+            .layers()
+            .flat_map(|(_, w)| w.iter())
+            .filter(|w| w.sense.senses_click())
+            .filter(|w| (w.rect.width() - side).abs() < 0.5 && (w.rect.height() - side).abs() < 0.5)
+            .map(|w| (w.rect, w.enabled))
+            .collect()
+    });
+    out.sort_by(|a, b| a.0.left().total_cmp(&b.0.left()));
+    out
+}
+
+fn painted_text(out: &FullOutput) -> Vec<String> {
+    out.shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_blocked_stop_draws_disabled_with_its_reason_and_reports_nothing() {
+    let busy = Activity::Busy {
+        enter: SendIntent::Steer,
+        can_steer: true,
+        can_queue: false,
+    };
+    let stop_of = |h: &mut Harness| {
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        let side = Composer::control_box(&h.ctx, false).side(&Metrics::get(&h.ctx));
+        let found = squares(&h.ctx, side);
+        assert!(found.len() >= 2, "{found:?}");
+        found[found.len() - 2]
+    };
+
+    let mut free = Harness::new();
+    free.activity = busy;
+    let (rect, enabled) = stop_of(&mut free);
+    assert!(enabled);
+    let at = rect.center();
+    let action = free.act(vec![
+        Event::PointerMoved(at),
+        button(at, true),
+        button(at, false),
+    ]);
+    assert_eq!(action, Some(ComposerAction::Stop));
+
+    let mut held = Harness::new();
+    held.activity = busy;
+    held.stop_blocked = Some("Waiting for the relay");
+    held.ctx.all_styles_mut(|s| {
+        s.interaction.tooltip_delay = 0.0;
+        s.interaction.show_tooltips_only_when_still = false;
+    });
+    let (rect, enabled) = stop_of(&mut held);
+    assert!(!enabled, "Stop draws disabled");
+    let at = rect.center();
+    let mut shown = Vec::new();
+    for _ in 0..3 {
+        shown = painted_text(&held.frame_full(vec![Event::PointerMoved(at)]).1);
+    }
+    assert!(
+        shown.iter().any(|t| t == "Waiting for the relay"),
+        "{shown:?}"
+    );
+    let action = held.act(vec![button(at, true), button(at, false)]);
+    assert_eq!(action, None);
+}
+
+#[test]
+fn attachment_thumbnails_crop_to_a_centred_square() {
+    let ctx = Context::default();
+    let image = |w, h| egui::ColorImage::filled([w, h], egui::Color32::RED);
+    let wide = ctx.load_texture("wide", image(40, 20), egui::TextureOptions::default());
+    let tall = ctx.load_texture("tall", image(20, 40), egui::TextureOptions::default());
+    let unknown = egui::TextureId::User(7);
+    let chips = [
+        AttachmentChip {
+            image: Some(wide.id()),
+            ..AttachmentChip::new("wide.png")
+        },
+        AttachmentChip {
+            image: Some(tall.id()),
+            ..AttachmentChip::new("tall.png")
+        },
+        AttachmentChip {
+            image: Some(unknown),
+            ..AttachmentChip::new("user.png")
+        },
+    ];
+    let mut state = ComposerState::default();
+    let raw = || RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+        ..RawInput::default()
+    };
+    let mut out = ctx.run_ui(raw(), |ui| {
+        Composer::new(SALT).attachments(&chips).show(ui, &mut state);
+    });
+    out.textures_delta.clear();
+    let uv_of = |id: egui::TextureId| {
+        out.shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Rect(r) => r
+                .brush
+                .as_ref()
+                .filter(|b| b.fill_texture_id == id)
+                .map(|b| b.uv),
+            _ => None,
+        })
+    };
+    let rect = |x0, y0, x1, y1| Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1));
+    assert_eq!(uv_of(wide.id()), Some(rect(0.25, 0.0, 0.75, 1.0)));
+    assert_eq!(uv_of(tall.id()), Some(rect(0.0, 0.25, 1.0, 0.75)));
+    assert_eq!(uv_of(unknown), Some(rect(0.0, 0.0, 1.0, 1.0)));
+}
+
+#[test]
+fn control_box_sizes_app_buttons_like_the_composer_buttons() {
+    for touch in [false, true] {
+        let ctx = Context::default();
+        let side = Composer::control_box(&ctx, touch).side(&Metrics::get(&ctx));
+        assert!(side >= Composer::control_box(&ctx, false).side(&Metrics::get(&ctx)));
+        let mut state = ComposerState::default();
+        let mut placed = None;
+        for _ in 0..2 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                ..RawInput::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                Composer::new(SALT)
+                    .touch(touch)
+                    .trailing(|ui| {
+                        let size = Composer::control_box(ui.ctx(), touch);
+                        placed = Some(
+                            IconButton::new(crate::controls::icons::X, size)
+                                .show(ui)
+                                .rect,
+                        );
+                    })
+                    .show(ui, &mut state);
+            });
+            out.textures_delta.clear();
+        }
+        let placed = placed.expect("trailing drawn");
+        let found = squares(&ctx, side);
+        let send = found.last().expect("send drawn").0;
+        assert_eq!(placed.size(), send.size(), "touch {touch}");
+        assert!(
+            (placed.center().y - send.center().y).abs() < 0.5,
+            "touch {touch}"
+        );
+    }
 }

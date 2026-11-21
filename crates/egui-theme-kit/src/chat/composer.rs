@@ -32,7 +32,7 @@ use super::icons::ChatIcons;
 use super::mention::{MentionSource, Resolution, clean_label};
 use super::palette::ChatPalette;
 use super::surface::{SurfaceKind, surface_frame};
-use super::transcript::AttachmentChip;
+use super::transcript::{AttachmentChip, cover_uv};
 use super::types::CowStr;
 use crate::controls::{IconBox, IconButton, Metrics, elided};
 use popup::Suggestion;
@@ -133,6 +133,8 @@ pub struct ComposerMode<'a> {
     pub editable: bool,
     /// Why sending is blocked, shown as the send tooltip.
     pub send_blocked: Option<CowStr<'a>>,
+    /// Why stopping is blocked, shown as the tooltip of a disabled Stop that reports nothing.
+    pub stop_blocked: Option<CowStr<'a>>,
 }
 
 impl Default for ComposerMode<'_> {
@@ -141,6 +143,7 @@ impl Default for ComposerMode<'_> {
             activity: Activity::Idle,
             editable: true,
             send_blocked: None,
+            stop_blocked: None,
         }
     }
 }
@@ -362,6 +365,17 @@ impl<'a> Composer<'a> {
         self
     }
 
+    /// Box size of the composer's own buttons; `touch` matches [`Composer::touch`], which defaults to whether the screen is touched.
+    pub fn control_box(ctx: &Context, touch: bool) -> IconBox {
+        let m = Metrics::get(ctx);
+        let target = if touch {
+            m.control_h.max(TOUCH_MIN)
+        } else {
+            m.button_h
+        };
+        icon_box_for(&m, target)
+    }
+
     pub fn show(self, ui: &mut Ui, state: &mut ComposerState) -> ComposerResponse {
         let text_id = text_id_of(self.id_salt);
         let parts = text_id.with("egui_theme_kit.chat.composer.parts");
@@ -373,14 +387,7 @@ impl<'a> Composer<'a> {
         let look = Look {
             p: ChatPalette::get(&ctx),
             icons: ChatIcons::get(&ctx),
-            icon_box: icon_box_for(
-                &m,
-                if touch {
-                    m.control_h.max(TOUCH_MIN)
-                } else {
-                    m.button_h
-                },
-            ),
+            icon_box: Self::control_box(&ctx, touch),
             row_h: if touch {
                 m.control_h.max(TOUCH_MIN)
             } else {
@@ -1257,10 +1264,10 @@ fn attachment_row(ui: &mut Ui, look: &Look, attachments: &[AttachmentChip<'_>], 
                 |ui| {
                     ui.horizontal(|ui| {
                         if let Some(texture) = chip.image {
-                            ui.add(Image::new(SizedTexture::new(
-                                texture,
-                                vec2(m.icon_lg, m.icon_lg),
-                            )));
+                            ui.add(
+                                Image::new(SizedTexture::new(texture, vec2(m.icon_lg, m.icon_lg)))
+                                    .uv(cover_uv(ui.ctx(), texture)),
+                            );
                         }
                         let font = TextStyle::Small.resolve(ui.style());
                         let galley = elided(ui, &chip.name, font, ATTACHMENT_NAME_W);
@@ -1485,13 +1492,18 @@ impl Controls<'_, '_> {
         {
             out.action = Some(ComposerAction::Attach);
         }
-        if mode.activity.is_busy()
-            && IconButton::new(look.icons.stop, look.icon_box)
+        if mode.activity.is_busy() {
+            let stop = IconButton::new(look.icons.stop, look.icon_box)
                 .tip("Stop")
-                .show(&mut right)
-                .clicked()
-        {
-            out.action = Some(ComposerAction::Stop);
+                .enabled(mode.stop_blocked.is_none())
+                .show(&mut right);
+            let stop = match &mode.stop_blocked {
+                Some(reason) => stop.on_disabled_hover_text(reason.as_ref()),
+                None => stop,
+            };
+            if stop.clicked() {
+                out.action = Some(ComposerAction::Stop);
+            }
         }
         let alternate = mode
             .activity
