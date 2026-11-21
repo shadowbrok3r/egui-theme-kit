@@ -1267,6 +1267,8 @@ fn attachment_row(ui: &mut Ui, look: &Look, attachments: &[AttachmentChip<'_>], 
                         let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
                         let ink = if chip.reading {
                             look.p.text_dim
+                        } else if chip.failed {
+                            look.p.error
                         } else {
                             look.p.chip_text
                         };

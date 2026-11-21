@@ -3,10 +3,11 @@
 use egui::{Align, Layout, Rect, Sense, Stroke, TextFormat, Ui, Vec2, pos2, text::LayoutJob, vec2};
 
 use super::DetailLevel;
+use super::bubble::markdown_lines;
 use super::entry::{WorkItem, WorkKind, WorkStatus};
 use super::group::{WorkStats, work_summary};
 use super::markdown::{self, wrap_width};
-use super::payload::{self, Part, mono_text};
+use super::payload::{self, Part, mono_lines};
 use super::rich::{one_row, plain};
 use super::row::RowCx;
 use super::shell;
@@ -272,7 +273,7 @@ fn detail(ui: &mut Ui, rc: &mut RowCx<'_>, item: &WorkItem<'_>) {
         WorkKind::Reasoning => {
             if let Some(body) = &item.body {
                 let ink = rc.p.text_dim;
-                markdown::show(ui, rc, body, ink, id, false);
+                markdown_lines(ui, rc, &item.key, body, ink, id);
             }
             return;
         }
@@ -295,11 +296,12 @@ fn detail(ui: &mut Ui, rc: &mut RowCx<'_>, item: &WorkItem<'_>) {
     }
     if let Some(args) = &item.arguments {
         caption(ui, rc, "Arguments");
-        payload::show(ui, rc, args, id.with("arguments"), Part::Arguments);
+        payload::show(ui, rc, args, id.with("arguments"), Part::Arguments, None);
     }
     if let Some(result) = &item.result {
         caption(ui, rc, "Result");
-        payload::show(ui, rc, result, id.with("result"), Part::Result);
+        let key = Some(item.key.as_ref());
+        payload::show(ui, rc, result, id.with("result"), Part::Result, key);
     }
     if let Some(body) = item.body.as_deref().filter(|b| !b.trim().is_empty()) {
         match item.kind {
@@ -307,11 +309,11 @@ fn detail(ui: &mut Ui, rc: &mut RowCx<'_>, item: &WorkItem<'_>) {
             WorkKind::Command => {
                 caption(ui, rc, "Output");
                 let ink = rc.p.text;
-                mono_text(ui, rc, body, ink, id.with("output"));
+                mono_lines(ui, rc, body, ink, id.with("output"), &item.key);
             }
             _ => {
                 let ink = rc.p.text;
-                markdown::show(ui, rc, body, ink, id.with("body"), false);
+                markdown_lines(ui, rc, &item.key, body, ink, id.with("body"));
             }
         }
     }

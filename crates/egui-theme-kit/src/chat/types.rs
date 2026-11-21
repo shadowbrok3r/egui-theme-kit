@@ -314,6 +314,11 @@ pub enum ChatAction {
     Resend(String),
     /// Key of a message to load back into the composer.
     EditResend(String),
+    /// Fetch again the failed attachment at `index` of the user message keyed `key`.
+    RetryAttachment {
+        key: String,
+        index: usize,
+    },
     /// Request for the history before the first entry.
     LoadOlder,
 }

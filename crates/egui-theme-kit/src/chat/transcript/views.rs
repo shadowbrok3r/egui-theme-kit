@@ -60,7 +60,7 @@ impl<'a> ChatText<'a> {
     /// A payload as a JSON tree opened two levels, or capped monospace text.
     pub fn payload(self, ui: &mut Ui, payload: &Payload<'_>) -> Vec<ChatAction> {
         self.run(ui, |ui, rc, id| {
-            payload::show(ui, rc, payload, id, Part::Detail)
+            payload::show(ui, rc, payload, id, Part::Detail, None)
         })
     }
 

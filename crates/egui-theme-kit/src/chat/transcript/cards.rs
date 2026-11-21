@@ -438,7 +438,14 @@ pub(crate) fn approval(
                 markdown::code_block(ui, rc, "shell", command, view.with((key, "command")));
             }
             if let Some(detail) = &card.detail {
-                payload::show(ui, rc, detail, view.with((key, "detail")), Part::Detail);
+                payload::show(
+                    ui,
+                    rc,
+                    detail,
+                    view.with((key, "detail")),
+                    Part::Detail,
+                    None,
+                );
             }
             if let Some(reason) = &card.reason {
                 let font = rc.f.small.clone();

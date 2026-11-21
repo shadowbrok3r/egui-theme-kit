@@ -1,7 +1,8 @@
 //! User bubbles, unframed agent messages, notices, dividers and the load-earlier row.
 
 use egui::{
-    Align, Image, Layout, Margin, Rect, Response, Sense, Stroke, TextFormat, Ui, Vec2, pos2, vec2,
+    Align, Color32, Id, Image, Layout, Margin, Rect, Response, Sense, Stroke, TextFormat, Ui, Vec2,
+    pos2, vec2,
 };
 
 use super::LoadState;
@@ -72,7 +73,7 @@ pub(crate) fn user(ui: &mut Ui, rc: &mut RowCx<'_>, m: &UserMessage<'_>) {
 
     if !m.attachments.is_empty() {
         ui.add_space(rc.m.gap.y / 2.0);
-        attachments(ui, rc, &m.attachments);
+        attachments(ui, rc, &m.key, &m.attachments);
     }
     let meta_rect = Rect::from_min_size(
         ui.cursor().min,
@@ -169,13 +170,14 @@ fn icon(ui: &mut Ui, rc: &RowCx<'_>, icon: crate::controls::Icon, color: egui::C
     icon.show_tinted(ui, rc.m.icon_sm, color);
 }
 
-/// Attachment chips, right-aligned: a thumbnail or file icon, the name, and a spinner while reading.
-fn attachments(ui: &mut Ui, rc: &RowCx<'_>, chips: &[AttachmentChip<'_>]) {
+/// Attachment chips, right-aligned: a thumbnail or file icon, the name, and a spinner while reading or a retry once failed.
+fn attachments(ui: &mut Ui, rc: &mut RowCx<'_>, key: &str, chips: &[AttachmentChip<'_>]) {
     ui.with_layout(
         Layout::right_to_left(Align::Min).with_main_wrap(true),
         |ui| {
             ui.spacing_mut().item_spacing = vec2(rc.m.gap.x / 2.0, rc.m.gap.y / 2.0);
             for (n, chip) in chips.iter().enumerate() {
+                let failed = chip.failed && !chip.reading;
                 let margin = Margin::symmetric(rc.m.pad.x as i8 / 2, (rc.m.pad.y / 2.0) as i8);
                 surface_frame(ui, ("attachment", n), SurfaceKind::Chip, margin, |ui| {
                     ui.horizontal(|ui| {
@@ -189,6 +191,9 @@ fn attachments(ui: &mut Ui, rc: &RowCx<'_>, chips: &[AttachmentChip<'_>]) {
                                         .corner_radius(rc.p.radius_chip),
                                 );
                             }
+                            None if failed => {
+                                rc.icons.error.show_tinted(ui, rc.m.icon_sm, rc.p.error);
+                            }
                             None => {
                                 icons::FILE.show_tinted(ui, rc.m.icon_sm, rc.p.chip_text);
                             }
@@ -199,6 +204,17 @@ fn attachments(ui: &mut Ui, rc: &RowCx<'_>, chips: &[AttachmentChip<'_>]) {
                             .on_hover_text(chip.name.as_ref());
                         if chip.reading {
                             tinted_spinner(ui, SpinnerSize::Sm, rc.p.running);
+                        } else if failed {
+                            let label = egui::RichText::new("Retry").font(rc.f.small.clone());
+                            let retry = ui
+                                .add(egui::Link::new(label))
+                                .on_hover_text("Load the attachment again");
+                            if rc.tapped(&retry) {
+                                rc.actions.push(ChatAction::RetryAttachment {
+                                    key: key.to_owned(),
+                                    index: n,
+                                });
+                            }
                         }
                     });
                 });
@@ -226,22 +242,7 @@ pub(crate) fn agent(ui: &mut Ui, rc: &mut RowCx<'_>, m: &AgentMessage<'_>, heade
     if m.text.trim().is_empty() && m.streaming {
         tinted_spinner(ui, SpinnerSize::Sm, rc.p.running);
     } else {
-        match rc.agent_lines {
-            Some(lines) => {
-                for (n, piece) in split_claimed(&m.text, |l| lines.claims(l))
-                    .into_iter()
-                    .enumerate()
-                {
-                    match piece {
-                        Piece::Text(text) => markdown::show(ui, rc, text, ink, id.with(n), false),
-                        Piece::Line(line) => {
-                            ui.push_id(id.with(n), |ui| lines.show(ui, &m.key, line));
-                        }
-                    }
-                }
-            }
-            None => markdown::show(ui, rc, &m.text, ink, id, false),
-        }
+        markdown_lines(ui, rc, &m.key, &m.text, ink, id);
         if m.streaming {
             tinted_spinner(ui, SpinnerSize::Sm, rc.p.running);
         }
@@ -272,6 +273,32 @@ pub(crate) fn agent(ui: &mut Ui, rc: &mut RowCx<'_>, m: &AgentMessage<'_>, heade
         });
         if rc.tapped(&copy) {
             rc.copy(ui, m.text.to_string());
+        }
+    }
+}
+
+/// Markdown whose lines the app claims are drawn by the app for the entry keyed `key`.
+pub(crate) fn markdown_lines(
+    ui: &mut Ui,
+    rc: &mut RowCx<'_>,
+    key: &str,
+    text: &str,
+    ink: Color32,
+    id: Id,
+) {
+    let Some(lines) = rc.agent_lines else {
+        return markdown::show(ui, rc, text, ink, id, false);
+    };
+    let pieces = split_claimed(text, |l| lines.claims(l));
+    if let [] | [Piece::Text(_)] = pieces.as_slice() {
+        return markdown::show(ui, rc, text, ink, id, false);
+    }
+    for (n, piece) in pieces.into_iter().enumerate() {
+        match piece {
+            Piece::Text(text) => markdown::show(ui, rc, text, ink, id.with(n), false),
+            Piece::Line(line) => {
+                ui.push_id(id.with(n), |ui| lines.show(ui, key, line));
+            }
         }
     }
 }

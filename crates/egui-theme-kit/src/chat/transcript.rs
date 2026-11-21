@@ -53,12 +53,20 @@ const OVERSCAN: f32 = 0.5;
 /// Share of the viewport height above which a user message counts as current.
 const NAV_LINE: f32 = 0.33;
 
-/// Draws app-defined lines of agent messages, such as media tags, in place of their text.
+/// Context slot holding the tap suppression of the transcript being drawn.
+fn suppress_id() -> Id {
+    Id::unique("egui_theme_kit.chat.transcript.tap_suppressed")
+}
+
+/// Draws app-defined lines, such as media tags, in place of their text.
+///
+/// Lines are offered from agent messages and, once a work item is opened, from its non-JSON text
+/// result and its body; file-change diffs and JSON trees are drawn as they are.
 pub trait AgentLines {
     /// Whether the app draws `line`; lines inside code fences are never offered.
     fn claims(&self, line: &str) -> bool;
 
-    /// Draws a claimed `line` of the agent message keyed `key`.
+    /// Draws a claimed `line` of the agent message or work item keyed `key`.
     fn show(&self, ui: &mut Ui, key: &str, line: &str);
 }
 
@@ -266,6 +274,13 @@ impl TranscriptState {
     pub fn clear_heights(&mut self) {
         self.heights.clear();
     }
+
+    /// Whether the transcript ignored taps in its last frame because the press stopped a fling.
+    ///
+    /// Inside [`Transcript::show`] callbacks, read [`Transcript::tap_suppressed`] instead.
+    pub fn tap_suppressed(&self) -> bool {
+        self.suppress
+    }
 }
 
 /// What a transcript frame produced.
@@ -386,7 +401,7 @@ impl<'a> Transcript<'a> {
         }
     }
 
-    /// Lets the app draw lines of agent messages it claims, such as media tags.
+    /// Lets the app draw lines it claims, such as media tags, in agent messages and opened work items.
     pub fn agent_lines(mut self, lines: &'a dyn AgentLines) -> Self {
         self.agent_lines = Some(lines);
         self
@@ -421,7 +436,18 @@ impl<'a> Transcript<'a> {
         self
     }
 
+    /// Whether the transcript being drawn ignores taps this frame because the press stopped a fling.
+    ///
+    /// Valid inside the `custom` callback of [`Self::show`] and in [`AgentLines::show`]; false
+    /// outside a transcript. App rows count a tap as `response.clicked() && !Transcript::tap_suppressed(ui.ctx())`.
+    pub fn tap_suppressed(ctx: &egui::Context) -> bool {
+        ctx.data(|d| d.get_temp::<bool>(suppress_id()))
+            .unwrap_or(false)
+    }
+
     /// Draws the entries of `src`; `custom` draws [`ChatEntry::Custom`] rows by key.
+    ///
+    /// Taps in `custom` rows should be ignored while [`Self::tap_suppressed`] is true.
     pub fn show<S: TranscriptSource + ?Sized>(
         self,
         ui: &mut Ui,
@@ -458,6 +484,11 @@ impl<'a> Transcript<'a> {
         });
         state.suppress = suppress_taps(state.suppress, pressed, down, released, moving);
         rc.suppress = state.suppress;
+        let outer_suppress = ui.data_mut(|d| {
+            let outer = d.get_temp::<bool>(suppress_id());
+            d.insert_temp(suppress_id(), state.suppress);
+            outer
+        });
 
         let width = state_width(ui, self.options.max_width);
         let em = rc.f.body.size;
@@ -721,6 +752,12 @@ impl<'a> Transcript<'a> {
                 .map(|_| 0)
         });
 
+        ui.data_mut(|d| match outer_suppress {
+            Some(outer) => {
+                d.insert_temp(suppress_id(), outer);
+            }
+            None => d.remove::<bool>(suppress_id()),
+        });
         let mut actions = rc.actions;
         actions.append(&mut card_actions);
         TranscriptResponse {
