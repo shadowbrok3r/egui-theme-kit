@@ -94,15 +94,14 @@ pub(super) fn nav_text(nav: MessageNav) -> String {
     }
 }
 
-/// Whether the previous and next steps lead anywhere.
+/// Whether the previous and next steps lead anywhere, counting messages beyond the loaded ones.
 pub(super) fn nav_steps(nav: MessageNav) -> (bool, bool) {
-    if nav.total == 0 {
-        return (false, false);
-    }
-    match nav.current {
+    let (prev, next) = match nav.current {
+        _ if nav.total == 0 => (false, false),
         Some(i) => (i > 0, i + 1 < nav.total),
         None => (true, true),
-    }
+    };
+    (prev || nav.more_before, next || nav.more_after)
 }
 
 /// Sum of the badges of `items` and the most urgent tone among the non-zero ones.

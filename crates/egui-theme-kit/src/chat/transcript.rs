@@ -762,10 +762,7 @@ impl<'a> Transcript<'a> {
         actions.append(&mut card_actions);
         TranscriptResponse {
             actions,
-            nav: MessageNav {
-                current: current_user,
-                total: users.len(),
-            },
+            nav: MessageNav::new(current_user, users.len()),
             at_bottom,
         }
     }

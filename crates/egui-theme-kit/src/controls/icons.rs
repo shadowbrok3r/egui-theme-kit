@@ -26,6 +26,8 @@ pub const ERROR: Icon = Icon::painted(error);
 pub const CHECK_CIRCLE: Icon = Icon::painted(check_circle);
 pub const MINUS_CIRCLE: Icon = Icon::painted(minus_circle);
 pub const MENU: Icon = Icon::painted(menu);
+/// Three dots in a row.
+pub const DOTS: Icon = Icon::painted(dots);
 pub const GRID: Icon = Icon::painted(grid);
 pub const LIST: Icon = Icon::painted(list);
 pub const FOLDER: Icon = Icon::painted(folder);
@@ -56,7 +58,7 @@ pub const PASTE: Icon = Icon::painted(paste);
 pub const SELECT_ALL: Icon = Icon::painted(select_all);
 
 /// Every icon of the set with its name.
-pub const ALL: [(&str, Icon); 47] = [
+pub const ALL: [(&str, Icon); 48] = [
     ("caret-down", CARET_DOWN),
     ("caret-up", CARET_UP),
     ("caret-right", CARET_RIGHT),
@@ -76,6 +78,7 @@ pub const ALL: [(&str, Icon); 47] = [
     ("check-circle", CHECK_CIRCLE),
     ("minus-circle", MINUS_CIRCLE),
     ("menu", MENU),
+    ("dots", DOTS),
     ("grid", GRID),
     ("list", LIST),
     ("folder", FOLDER),
@@ -278,6 +281,13 @@ fn menu(p: &Painter, r: Rect, c: Color32) {
     let pen = Pen::new(p, r, c);
     for y in [0.28, 0.5, 0.72] {
         pen.line(&[(0.2, y), (0.8, y)]);
+    }
+}
+
+fn dots(p: &Painter, r: Rect, c: Color32) {
+    let pen = Pen::new(p, r, c);
+    for x in [0.22, 0.5, 0.78] {
+        pen.disc(x, 0.5, 0.08);
     }
 }
 
@@ -552,6 +562,27 @@ mod tests {
         });
         full.textures_delta.clear();
         full.shapes.len()
+    }
+
+    #[test]
+    fn dots_paint_three_discs_in_a_row() {
+        let ctx = Context::default();
+        let mut full = ctx.run_ui(Default::default(), |ui| {
+            let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(20.0, 20.0));
+            DOTS.paint(ui, rect, 20.0, Color32::WHITE);
+        });
+        full.textures_delta.clear();
+        let centres: Vec<Pos2> = full
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                Shape::Circle(c) if c.fill == Color32::WHITE => Some(c.center),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(centres.len(), 3, "{centres:?}");
+        assert!(centres.iter().all(|c| (c.y - 20.0).abs() < 0.01));
+        assert!(centres.windows(2).all(|w| w[1].x > w[0].x));
     }
 
     #[test]

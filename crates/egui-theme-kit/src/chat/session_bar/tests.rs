@@ -143,10 +143,7 @@ fn sample_bar(
         .show(ui)
 }
 
-const NAV: MessageNav = MessageNav {
-    current: Some(1),
-    total: 3,
-};
+const NAV: MessageNav = MessageNav::new(Some(1), 3);
 
 #[test]
 fn layouts_follow_the_width_in_control_heights() {
@@ -181,7 +178,7 @@ fn chips_that_do_not_fit_leave_room_for_the_more_button() {
 
 #[test]
 fn the_counter_reads_one_based_and_the_ends_stop_the_steps() {
-    let at = |current, total| MessageNav { current, total };
+    let at = MessageNav::new;
     assert_eq!(nav_text(at(Some(1), 3)), "2/3");
     assert_eq!(nav_text(at(None, 3)), "\u{2013}/3");
     assert_eq!(nav_steps(at(Some(0), 3)), (false, true));
@@ -313,11 +310,44 @@ fn jump_buttons_report_steps_and_stop_at_the_ends() {
         click_part(NAV, |id| id.with("nav_next")),
         vec![SessionBarAction::Nav(NavStep::Next)]
     );
-    let first = MessageNav {
-        current: Some(0),
-        total: 3,
-    };
+    let first = MessageNav::new(Some(0), 3);
     assert!(click_part(first, |id| id.with("nav_prev")).is_empty());
+}
+
+#[test]
+fn steps_past_the_loaded_messages_stay_enabled_when_more_exist() {
+    let at = MessageNav::new;
+    assert_eq!(nav_steps(at(Some(0), 3).more(true, false)), (true, true));
+    assert_eq!(nav_steps(at(Some(2), 3).more(false, true)), (true, true));
+    assert_eq!(nav_steps(at(Some(0), 1).more(true, false)), (true, false));
+    assert_eq!(nav_steps(at(None, 0).more(true, false)), (true, false));
+    assert_eq!(nav_steps(at(None, 0).more(false, true)), (false, true));
+    assert_eq!(nav_steps(at(None, 0).more(true, true)), (true, true));
+    assert_eq!(nav_steps(MessageNav::default()), (false, false));
+}
+
+#[test]
+fn stepping_past_the_ends_reports_the_step_for_the_app_to_seek() {
+    let first = MessageNav::new(Some(0), 3).more(true, false);
+    assert_eq!(
+        click_part(first, |id| id.with("nav_prev")),
+        vec![SessionBarAction::Nav(NavStep::Prev)]
+    );
+    let last = MessageNav::new(Some(2), 3).more(false, true);
+    assert_eq!(
+        click_part(last, |id| id.with("nav_next")),
+        vec![SessionBarAction::Nav(NavStep::Next)]
+    );
+    let none = MessageNav::new(None, 0).more(true, true);
+    assert_eq!(
+        click_part(none, |id| id.with("nav_prev")),
+        vec![SessionBarAction::Nav(NavStep::Prev)]
+    );
+    assert_eq!(
+        click_part(none, |id| id.with("nav_next")),
+        vec![SessionBarAction::Nav(NavStep::Next)]
+    );
+    assert!(click_part(MessageNav::new(None, 0), |id| id.with("nav_next")).is_empty());
 }
 
 #[test]
@@ -667,4 +697,251 @@ fn row_menus_hide_and_disable_entries_per_row() {
     assert!(!has(&texts, "Mention in chat"));
     click(&ctx, 400.0, rect_of(&texts, "Take over").center(), draw);
     assert!(actions.borrow().is_empty(), "{:?}", actions.borrow());
+}
+
+/// Runs one frame `width` wide and returns every painted shape.
+fn frame_shapes(
+    ctx: &Context,
+    width: f32,
+    events: Vec<Event>,
+    mut f: impl FnMut(&mut Ui),
+) -> Vec<Shape> {
+    let mut full = ctx.run_ui(input(width, events), |ui| {
+        CentralPanel::default().show(ui, |ui| f(ui));
+    });
+    full.textures_delta.clear();
+    full.shapes.into_iter().map(|s| s.shape).collect()
+}
+
+fn shape_texts(shapes: &[Shape]) -> Vec<(String, Rect)> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+            _ => None,
+        })
+        .collect()
+}
+
+type Draw<'d> = dyn FnMut(&mut Ui) -> Option<SessionBarAction<&'static str>> + 'd;
+
+/// Clicks the widget `part` of the card `draw` paints `width` wide; returns the card's actions.
+fn click_in(
+    width: f32,
+    draw: &mut Draw<'_>,
+    part: impl Fn(Id) -> Id,
+) -> Vec<SessionBarAction<&'static str>> {
+    let ctx = context();
+    let mut target = None;
+    for _ in 0..2 {
+        frame(&ctx, width, Vec::new(), |ui| {
+            target = Some(part(bar_id(ui)));
+            let _ = draw(ui);
+        });
+    }
+    let rect = target
+        .and_then(|id| ctx.read_response(id))
+        .map(|r| r.rect)
+        .expect("the part was drawn");
+    let mut actions = Vec::new();
+    click(&ctx, width, rect.center(), |ui| actions.extend(draw(ui)));
+    actions
+}
+
+/// Opens the menu of the card's `part`, clicks the row reading `row`; returns the open menu's shapes and the actions.
+fn pick_in_menu(
+    width: f32,
+    draw: &mut Draw<'_>,
+    part: impl Fn(Id) -> Id,
+    row: &str,
+) -> (Vec<Shape>, Vec<SessionBarAction<&'static str>>) {
+    let ctx = context();
+    let mut target = None;
+    for _ in 0..2 {
+        frame(&ctx, width, Vec::new(), |ui| {
+            target = Some(part(bar_id(ui)));
+            let _ = draw(ui);
+        });
+    }
+    let rect = target
+        .and_then(|id| ctx.read_response(id))
+        .map(|r| r.rect)
+        .expect("the menu button was drawn");
+    click(&ctx, width, rect.center(), |ui| {
+        let _ = draw(ui);
+    });
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        shapes = frame_shapes(&ctx, width, Vec::new(), |ui| {
+            let _ = draw(ui);
+        });
+    }
+    let texts = shape_texts(&shapes);
+    let mut actions = Vec::new();
+    click(&ctx, width, rect_of(&texts, row).center(), |ui| {
+        actions.extend(draw(ui));
+    });
+    (shapes, actions)
+}
+
+#[test]
+fn a_disabled_button_ignores_clicks_inline_and_in_the_overflow_menu() {
+    let off = [BarButton::new("files", icons::FILE, "Files").enabled(false)];
+    let on = [BarButton::new("files", icons::FILE, "Files")];
+    assert!(on[0].enabled);
+    let draw = |buttons: &[BarButton<'static, &'static str>]| {
+        let buttons = buttons.to_vec();
+        move |ui: &mut Ui| sample_bar(ui, &[], &buttons, NAV)
+    };
+    assert!(click_in(900.0, &mut draw(&off), |id| id.with(("button", 0))).is_empty());
+    assert_eq!(
+        click_in(900.0, &mut draw(&on), |id| id.with(("button", 0))),
+        vec![SessionBarAction::Button("files")]
+    );
+    let (_, picked) = pick_in_menu(500.0, &mut draw(&off), |id| id.with("more"), "Files");
+    assert!(picked.is_empty(), "{picked:?}");
+    let (_, picked) = pick_in_menu(500.0, &mut draw(&on), |id| id.with("more"), "Files");
+    assert_eq!(picked, vec![SessionBarAction::Button("files")]);
+}
+
+fn meter_chip(enabled: bool) -> [OptionChip<'static, &'static str>; 1] {
+    [OptionChip::new("context", "Context", "42%")
+        .kind(ChipKind::Meter {
+            fraction: 0.42,
+            action: Some("Compact".into()),
+        })
+        .action_enabled(enabled)]
+}
+
+#[test]
+fn a_greyed_meter_action_shows_but_does_not_fire() {
+    for (enabled, folded) in [(false, false), (true, false), (false, true), (true, true)] {
+        let chips = meter_chip(enabled);
+        let mut draw = |ui: &mut Ui| sample_bar(ui, &chips, &[], NAV);
+        let (width, part): (f32, fn(Id) -> Id) = if folded {
+            (500.0, |id| id.with("more"))
+        } else {
+            (900.0, |id| id.with(("chip", 0)))
+        };
+        let (shapes, picked) = pick_in_menu(width, &mut draw, part, "Compact");
+        assert!(has(&shape_texts(&shapes), "Compact"));
+        let expected = if enabled {
+            vec![SessionBarAction::ChipAction("context")]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(picked, expected, "enabled {enabled}, folded {folded}");
+    }
+}
+
+#[test]
+fn a_folded_meter_row_draws_its_fill() {
+    let chips = meter_chip(true);
+    let mut draw = |ui: &mut Ui| sample_bar(ui, &chips, &[], NAV);
+    let (shapes, _) = pick_in_menu(500.0, &mut draw, |id| id.with("more"), "Compact");
+    let bars: Vec<Rect> = shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Rect(r) if (r.rect.height() - 4.0).abs() < 0.01 => Some(r.rect),
+            _ => None,
+        })
+        .collect();
+    let track = super::chips::MENU_METER_W;
+    let near = |w: f32| bars.iter().find(|r| (r.width() - w).abs() < 0.5);
+    let (track_rect, fill) = (near(track), near(track * 0.42));
+    assert!(track_rect.is_some() && fill.is_some(), "{bars:?}");
+    let (track_rect, fill) = (track_rect.unwrap(), fill.unwrap());
+    assert_eq!(fill.left(), track_rect.left());
+    let caption = rect_of(&shape_texts(&shapes), "Context: 42%");
+    assert!((fill.center().y - caption.center().y).abs() < 4.0);
+    assert!(fill.left() > caption.right());
+}
+
+/// Draws a card with `status_in_subtitle` set to `flag` and returns its painted texts after a tap on the title.
+fn tapped_compact(
+    flag: Option<bool>,
+    subtitle: Option<&'static str>,
+    touch: bool,
+) -> Vec<(String, Rect)> {
+    let ctx = context();
+    let draw = |ui: &mut Ui| {
+        let mut bar = SessionBar::<&str>::new("bar", TITLE).status(SessionStatus::Working, None);
+        if let Some(subtitle) = subtitle {
+            bar = bar.subtitle(subtitle);
+        }
+        if let Some(on) = flag {
+            bar = bar.status_in_subtitle(on);
+        }
+        let _ = bar.show(ui);
+    };
+    let finger = Event::Touch {
+        device_id: egui::TouchDeviceId(1),
+        id: egui::TouchId(1),
+        phase: egui::TouchPhase::Cancel,
+        pos: Pos2::ZERO,
+        force: None,
+    };
+    let first = if touch { vec![finger] } else { Vec::new() };
+    let mut title = Rect::NOTHING;
+    for events in [first, Vec::new()] {
+        let texts = frame(&ctx, 360.0, events, draw);
+        assert!(
+            !has(&texts, "Working"),
+            "the status label shows before a tap"
+        );
+        title = rect_of(&texts, TITLE);
+    }
+    click(&ctx, 360.0, title.center(), draw);
+    frame(&ctx, 360.0, Vec::new(), draw)
+}
+
+#[test]
+fn a_compact_card_can_lead_the_subtitle_with_the_status_label() {
+    let line = format!("Working \u{b7} {SUBTITLE}");
+    assert!(has(
+        &tapped_compact(Some(true), Some(SUBTITLE), false),
+        &line
+    ));
+    assert!(has(&tapped_compact(Some(true), None, false), "Working"));
+    assert!(has(&tapped_compact(None, Some(SUBTITLE), true), &line));
+    let plain = tapped_compact(None, Some(SUBTITLE), false);
+    assert!(has(&plain, SUBTITLE) && !has(&plain, &line));
+    let off = tapped_compact(Some(false), Some(SUBTITLE), true);
+    assert!(has(&off, SUBTITLE) && !has(&off, &line));
+
+    let ctx = context();
+    let mut wide = Vec::new();
+    for _ in 0..2 {
+        wide = frame(&ctx, 900.0, Vec::new(), |ui| {
+            let _ = SessionBar::<&str>::new("bar", TITLE)
+                .status(SessionStatus::Working, None)
+                .subtitle(SUBTITLE)
+                .status_in_subtitle(true)
+                .show(ui);
+        });
+    }
+    assert!(has(&wide, "Working") && has(&wide, SUBTITLE) && !has(&wide, &line));
+}
+
+#[test]
+fn the_more_button_paints_three_dots() {
+    let ctx = context();
+    let (chips, buttons) = (chips(), buttons());
+    let mut target = None;
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        shapes = frame_shapes(&ctx, 500.0, Vec::new(), |ui| {
+            target = Some(bar_id(ui).with("more"));
+            let _ = sample_bar(ui, &chips, &buttons, NAV);
+        });
+    }
+    let rect = target
+        .and_then(|id| ctx.read_response(id))
+        .map(|r| r.rect)
+        .expect("the more button was drawn");
+    let dots = shapes
+        .iter()
+        .filter(|s| matches!(s, Shape::Circle(c) if rect.contains(c.center)))
+        .count();
+    assert_eq!(dots, 3);
 }

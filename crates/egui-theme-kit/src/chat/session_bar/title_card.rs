@@ -1,5 +1,6 @@
 //! The per-session title card.
 
+use std::borrow::Cow;
 use std::hash::Hash;
 
 use egui::{
@@ -9,7 +10,7 @@ use egui::{
 
 use super::chips::{chip_menu, chip_width, show_chip};
 use super::layout::{BarLayout, fit_count, nav_steps, nav_text, title_span};
-use super::parts::{bar_button, button_caption, icon_button, target};
+use super::parts::{bar_button, button_caption, icon_button, target, touch};
 use super::{SessionBar, SessionBarAction};
 use crate::chat::icons::ChatIcons;
 use crate::chat::palette::ChatPalette;
@@ -66,15 +67,16 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
             m.gap.x,
             TITLE_MIN * m.control_h,
         );
-        let renamed = self.title(ui, id, Rect::from_x_y_ranges(span, row.y_range()), layout);
+        let subtitle = self.subtitle_line(ui, layout);
+        let title_rect = Rect::from_x_y_ranges(span, row.y_range());
+        let renamed = self.title(ui, id, title_rect, layout, subtitle.is_some());
         action = action.or(renamed.map(SessionBarAction::Rename));
-        let subtitle = self.subtitle.as_deref().filter(|s| !s.is_empty());
         if let Some(subtitle) = subtitle {
             let tapped = ui
                 .data(|d| d.get_temp::<bool>(id.with("subtitle")))
                 .unwrap_or(false);
             if !layout.compact() || tapped {
-                subtitle_row(ui, subtitle, layout == BarLayout::Full);
+                subtitle_row(ui, &subtitle, layout == BarLayout::Full);
             }
         }
         if !layout.folds() && !self.chips.is_empty() {
@@ -84,10 +86,28 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
         action
     }
 
+    fn status_text(&self) -> &str {
+        self.status_label.as_deref().unwrap_or(self.status.label())
+    }
+
+    /// The subtitle row's text: the subtitle, led by the status label when [`SessionBar::status_in_subtitle`] applies.
+    fn subtitle_line(&self, ui: &Ui, layout: BarLayout) -> Option<Cow<'_, str>> {
+        let subtitle = self.subtitle.as_deref().filter(|s| !s.is_empty());
+        let status = layout.compact() && self.status_in_subtitle.unwrap_or_else(|| touch(ui));
+        match (status, subtitle) {
+            (true, Some(subtitle)) => Some(Cow::Owned(format!(
+                "{} \u{b7} {subtitle}",
+                self.status_text()
+            ))),
+            (true, None) => Some(Cow::Borrowed(self.status_text())),
+            (false, subtitle) => subtitle.map(Cow::Borrowed),
+        }
+    }
+
     /// Paints the status dot and label at the left of `row`; returns their width.
     fn status_group(&self, ui: &mut Ui, id: Id, row: Rect, layout: BarLayout) -> f32 {
         let p = ChatPalette::of(ui);
-        let label = self.status_label.as_deref().unwrap_or(self.status.label());
+        let label = self.status_text();
         let dot = StatusDot::new(self.status.tone().color(&p))
             .pulse(self.status == SessionStatus::Working);
         let side = dot.side();
@@ -163,7 +183,14 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
     }
 
     /// Paints the title centred in `rect`, or the rename field while editing; returns a committed name.
-    fn title(&self, ui: &mut Ui, id: Id, rect: Rect, layout: BarLayout) -> Option<String> {
+    fn title(
+        &self,
+        ui: &mut Ui,
+        id: Id,
+        rect: Rect,
+        layout: BarLayout,
+        has_subtitle: bool,
+    ) -> Option<String> {
         let owner = owner_of(self.session, &self.title);
         match ui.data(|d| d.get_temp::<RenameDraft>(rename_id(id))) {
             Some(draft) if draft.2 == owner => return self.rename_field(ui, id, rect, draft),
@@ -177,7 +204,6 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
         let pos = (rect.center() - galley.size() / 2.0).round();
         let hit = Rect::from_min_size(pos, galley.size());
         ui.painter().galley(pos, galley, p.card_text);
-        let has_subtitle = self.subtitle.as_deref().is_some_and(|s| !s.is_empty());
         let taps = layout.compact() && has_subtitle;
         let sense = if self.renamable || taps {
             Sense::click()
@@ -259,6 +285,7 @@ impl<K: Clone + Hash> SessionBar<'_, K> {
             let clicked = MenuItem::new(&caption)
                 .icon(button.icon)
                 .checked(button.selected)
+                .enabled(button.enabled)
                 .show(ui)
                 .clicked();
             if clicked {
@@ -411,10 +438,10 @@ fn counter(ui: &mut Ui, id: Id, nav: MessageNav, side: f32) -> Option<usize> {
     let p = ChatPalette::of(ui);
     let font = medium_font(ui, TextStyle::Small);
     let text = nav_text(nav);
-    let widest = nav_text(MessageNav {
-        current: Some(nav.total.saturating_sub(1)),
-        total: nav.total,
-    });
+    let widest = nav_text(MessageNav::new(
+        Some(nav.total.saturating_sub(1)),
+        nav.total,
+    ));
     let galley = text_galley(ui, &text, font.clone());
     let reserve = text_galley(ui, &widest, font).size().x;
     let w = whole(galley.size().x.max(reserve) + 2.0 * COUNTER_PAD);
