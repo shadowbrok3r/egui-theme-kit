@@ -113,6 +113,7 @@ pub(crate) fn mono_lines(
     let last = pieces.len() - 1;
     mono_column(ui, rc, text, id, |ui, rc| {
         for (n, piece) in pieces.into_iter().enumerate() {
+            rc.marks.push((id.with(n).value(), ui.cursor().top()));
             match piece {
                 Piece::Text(run) if n < last => {
                     // Line ending before a claimed line.

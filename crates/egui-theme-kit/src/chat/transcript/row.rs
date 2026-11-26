@@ -92,6 +92,8 @@ pub(crate) struct RowCx<'a> {
     pub mention_stamp: Option<u64>,
     pub agent_lines: Option<&'a dyn super::AgentLines>,
     pub actions: Vec<ChatAction>,
+    /// Screen tops of the pieces drawn in the current row, by piece id.
+    pub marks: Vec<(u64, f32)>,
 }
 
 impl<'a> RowCx<'a> {
@@ -113,6 +115,7 @@ impl<'a> RowCx<'a> {
             mention_stamp: None,
             agent_lines: None,
             actions: Vec::new(),
+            marks: Vec::new(),
         }
     }
 

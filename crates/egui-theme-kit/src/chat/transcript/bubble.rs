@@ -295,6 +295,7 @@ pub(crate) fn markdown_lines(
         return markdown::show(ui, rc, text, ink, id, false);
     }
     for (n, piece) in pieces.into_iter().enumerate() {
+        rc.marks.push((id.with(n).value(), ui.cursor().top()));
         match piece {
             Piece::Text(text) => markdown::show(ui, rc, text, ink, id.with(n), false),
             Piece::Line(line) => {
