@@ -219,6 +219,8 @@ pub struct TranscriptState {
     heights: HashMap<u64, Height>,
     /// Row key hash and how far the viewport top is into that row.
     anchor: Option<(u64, f32)>,
+    /// Piece of the anchor row the view is held to, and its offset into that row.
+    anchor_mark: Option<(u64, f32)>,
     scroll_id: Option<Id>,
     view_h: f32,
     suppress: bool,
@@ -234,6 +236,7 @@ impl Default for TranscriptState {
             group_open: HashMap::new(),
             heights: HashMap::new(),
             anchor: None,
+            anchor_mark: None,
             scroll_id: None,
             view_h: 0.0,
             suppress: false,
@@ -575,7 +578,8 @@ impl<'a> Transcript<'a> {
         };
         let mut area = ScrollArea::vertical()
             .id_salt(id.with("scroll"))
-            .auto_shrink([false, false]);
+            .auto_shrink([false, false])
+            .animated(false);
         let start = match desired {
             Some(d) if (d - current).abs() > 0.5 => {
                 area = area.vertical_scroll_offset(d);
@@ -583,12 +587,14 @@ impl<'a> Transcript<'a> {
             }
             _ => current,
         };
+        let pinned = state.following;
         let kinetic = ui.spacing().scroll.kinetic;
         if start != current {
             ui.spacing_mut().scroll.kinetic.rubber_band = false;
         }
 
         let mut measured: Vec<(usize, f32)> = Vec::new();
+        let mut drawn_marks: Vec<(usize, Vec<(u64, f32)>)> = Vec::new();
         let mut card_actions: Vec<ChatAction> = Vec::new();
         let flash = state.flash.filter(|(_, t)| now - t < FLASH_SECS);
         let older = self.older;
@@ -662,6 +668,7 @@ impl<'a> Transcript<'a> {
                                 .layout(Layout::top_down(Align::Min)),
                         );
                         pass.contents(&mut child, &rows, r);
+                        drawn_marks.push((r, pass.take_marks(origin + row_tops[r])));
                         let drawn = child.min_rect();
                         pass.flash_row(ui, slot, row.hash, drawn);
                         if (drawn.height() - row.h).abs() > 0.5 {
@@ -684,6 +691,7 @@ impl<'a> Transcript<'a> {
                                 .layout(Layout::top_down(Align::Min)),
                         );
                         pass.contents(&mut child, &rows, r);
+                        drawn_marks.push((r, pass.take_marks(top)));
                         let h = child.min_rect().height();
                         ui.add_space(h);
                         let drawn = Rect::from_x_y_ranges(column, top..=top + h);
@@ -726,14 +734,43 @@ impl<'a> Transcript<'a> {
             state.following = true;
         }
 
+        let marks_of = |i: usize| {
+            drawn_marks
+                .iter()
+                .find(|(r, _)| *r == i)
+                .map(|(_, m)| m.as_slice())
+        };
+        if !pinned
+            && let (Some((hash, off)), Some((mark, was))) = (state.anchor, state.anchor_mark)
+            && let Some(now) = find_row(&rows, hash)
+                .and_then(marks_of)
+                .and_then(|m| m.iter().find(|(id, _)| *id == mark))
+                .map(|(_, y)| *y)
+            && (now - was).abs() > 0.5
+        {
+            state.anchor = Some((hash, off + now - was));
+            ui.ctx()
+                .request_discard("chat transcript content above the view resized");
+        }
+
+        // While pinned to the bottom, the anchor is read from the offset.
         let anchored = state
             .anchor
+            .filter(|_| !pinned)
             .and_then(|(hash, off)| find_row(&rows, hash).map(|i| (i, off + user_delta)));
         state.anchor = match anchored {
             Some((i, off)) if (0.0..rows[i].h).contains(&off) => Some((rows[i].hash, off)),
             Some((i, off)) => row_at(&rows, &row_tops, row_tops[i] + off),
             None => row_at(&rows, &row_tops, offset),
         };
+        state.anchor_mark = state.anchor.and_then(|(hash, off)| {
+            let marks = marks_of(find_row(&rows, hash)?)?;
+            marks
+                .iter()
+                .find(|(_, y)| *y >= off)
+                .or(marks.last())
+                .copied()
+        });
 
         let users: Vec<usize> = rows
             .iter()
@@ -840,6 +877,7 @@ fn resolve_jump<S: TranscriptSource + ?Sized>(
     state.following = false;
     state.stick_frames = 0;
     state.anchor = Some((rows[row].hash, -margin));
+    state.anchor_mark = None;
     state.flash = Some((rows[row].hash, now));
 }
 
@@ -857,6 +895,7 @@ struct RowPass<'p, 'a, S: ?Sized, F> {
 impl<S: TranscriptSource + ?Sized, F: FnMut(&mut Ui, &str)> RowPass<'_, '_, S, F> {
     /// Draws the gap and contents of row `r` into its own `ui`.
     fn contents(&mut self, ui: &mut Ui, rows: &[Row], r: usize) {
+        self.rc.marks.clear();
         let row = &rows[r];
         let prev = r.checked_sub(1).map(|p| rows[p].kind);
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -872,6 +911,15 @@ impl<S: TranscriptSource + ?Sized, F: FnMut(&mut Ui, &str)> RowPass<'_, '_, S, F
             self.custom,
             self.card_actions,
         );
+    }
+
+    /// The pieces the last row drew, by their offset from `row_top`.
+    fn take_marks(&mut self, row_top: f32) -> Vec<(u64, f32)> {
+        self.rc
+            .marks
+            .drain(..)
+            .map(|(id, y)| (id, y - row_top))
+            .collect()
     }
 
     /// Fills `slot` behind the row keyed `hash` while it is flashing.

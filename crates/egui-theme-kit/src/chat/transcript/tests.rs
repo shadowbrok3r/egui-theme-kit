@@ -1518,3 +1518,175 @@ fn floating_cards_within_scroll_past_the_given_height() {
     }
     assert!(height <= 121.0, "{height}");
 }
+
+/// Input with the pointer over the transcript and a wheel scroll of `dy` points, positive revealing earlier rows.
+fn wheel_input(dy: f32) -> RawInput {
+    let mut raw = input();
+    raw.events
+        .push(egui::Event::PointerMoved(egui::pos2(400.0, 300.0)));
+    let mut left = dy;
+    while left.abs() > 0.0 {
+        let step = left.clamp(-7.0, 7.0);
+        raw.events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, step),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+        left -= step;
+    }
+    raw
+}
+
+/// Runs one frame of `input`; returns its shapes.
+fn frame_with(
+    ctx: &Context,
+    state: &mut TranscriptState,
+    entries: &[ChatEntry<'_>],
+    raw: RawInput,
+) -> Vec<egui::epaint::ClippedShape> {
+    let mut out = ctx.run_ui(raw, |ui| {
+        Transcript::new("chat")
+            .options(TranscriptOptions::default())
+            .show(ui, state, entries, |ui, key| {
+                ui.label(key);
+            });
+    });
+    out.textures_delta.clear();
+    out.shapes
+}
+
+#[test]
+fn scrolling_up_after_the_bottom_row_grew_moves_by_the_scroll_alone() {
+    let mut entries = long_history(200);
+    let ctx = Context::default();
+    let mut state = TranscriptState::default();
+    let options = TranscriptOptions::default();
+    run(&ctx, &mut state, &entries, options, None, 4);
+    entries[199] = agent("m199".into(), format!("reply 199{}", "\n\nmore".repeat(12)));
+    let mut shapes = Vec::new();
+    for _ in 0..4 {
+        shapes = frame_with(&ctx, &mut state, &entries, wheel_input(0.0));
+    }
+    assert!(state.following());
+    let before = text_top(&shapes, "reply 198").expect("row above the grown one drawn");
+    shapes = frame_with(&ctx, &mut state, &entries, wheel_input(60.0));
+    for _ in 0..4 {
+        shapes = frame_with(&ctx, &mut state, &entries, wheel_input(0.0));
+    }
+    assert!(!state.following());
+    let after = text_top(&shapes, "reply 198");
+    assert!(
+        after.is_some_and(|a| (a - before - 60.0).abs() < 2.0),
+        "moved from {before} to {after:?} for a 60 point scroll"
+    );
+}
+
+/// Draws each claimed `[block:name]` line as its name over a block of the height set for it, scrolling
+/// the block named in `reveal` to the top once.
+#[derive(Default)]
+struct Blocks {
+    heights: std::cell::RefCell<HashMap<String, f32>>,
+    reveal: std::cell::RefCell<Option<String>>,
+}
+
+impl AgentLines for Blocks {
+    fn claims(&self, line: &str) -> bool {
+        line.starts_with("[block:")
+    }
+
+    fn show(&self, ui: &mut Ui, _key: &str, line: &str) {
+        let name = line.trim_start_matches("[block:").trim_end_matches(']');
+        let h = self.heights.borrow().get(name).copied().unwrap_or(20.0);
+        let label = ui.label(name);
+        ui.allocate_space(vec2(10.0, h));
+        if self.reveal.borrow().as_deref() == Some(name) {
+            self.reveal.take();
+            label.scroll_to_me(Some(Align::TOP));
+        }
+    }
+}
+
+/// Runs one frame of `raw` with `lines` drawing claimed lines; returns its shapes.
+fn frame_with_lines(
+    ctx: &Context,
+    state: &mut TranscriptState,
+    entries: &[ChatEntry<'_>],
+    lines: &dyn AgentLines,
+    raw: RawInput,
+) -> Vec<egui::epaint::ClippedShape> {
+    let mut out = ctx.run_ui(raw, |ui| {
+        Transcript::new("chat")
+            .agent_lines(lines)
+            .show(ui, state, entries, |_, _| {});
+    });
+    out.textures_delta.clear();
+    out.shapes
+}
+
+#[test]
+fn content_growing_above_the_view_inside_its_row_leaves_the_view_still() {
+    let mut entries = long_history(60);
+    let batch: String = (0..7).map(|n| format!("\n[block:b{n}]")).collect();
+    entries[30] = agent("m30".into(), format!("the batch{batch}"));
+    let blocks = Blocks::default();
+    for n in 3..7 {
+        blocks.heights.borrow_mut().insert(format!("b{n}"), 300.0);
+    }
+    let ctx = Context::default();
+    let mut state = TranscriptState::default();
+    for _ in 0..3 {
+        frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(0.0));
+    }
+    state.jump(Jump::Key("m30".into()));
+    for _ in 0..3 {
+        frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(0.0));
+    }
+    frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(-150.0));
+    let mut shapes = Vec::new();
+    for _ in 0..3 {
+        shapes = frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(0.0));
+    }
+    let before = text_top(&shapes, "b4").expect("the fifth block is on screen");
+    assert!(text_top(&shapes, "b2").is_none(), "the growing blocks are on screen, so this tests nothing");
+    for n in 0..3 {
+        blocks.heights.borrow_mut().insert(format!("b{n}"), 300.0);
+    }
+    for _ in 0..3 {
+        shapes = frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(0.0));
+    }
+    let after = text_top(&shapes, "b4");
+    assert!(
+        after.is_some_and(|a| (a - before).abs() < 1.0),
+        "the view moved from {before} to {after:?} when blocks above it grew"
+    );
+}
+
+#[test]
+fn a_row_scrolling_its_own_content_into_view_lands_there_and_stays() {
+    let mut entries = long_history(60);
+    let batch: String = (0..7).map(|n| format!("\n[block:b{n}]")).collect();
+    entries[30] = agent("m30".into(), format!("the batch{batch}"));
+    let blocks = Blocks::default();
+    let ctx = Context::default();
+    let mut state = TranscriptState::default();
+    for _ in 0..3 {
+        frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(0.0));
+    }
+    state.jump(Jump::Key("m30".into()));
+    *blocks.reveal.borrow_mut() = Some("b5".into());
+    frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(0.0));
+    for n in 0..7 {
+        blocks.heights.borrow_mut().insert(format!("b{n}"), 300.0);
+    }
+    let mut shapes = Vec::new();
+    for _ in 0..3 {
+        shapes = frame_with_lines(&ctx, &mut state, &entries, &blocks, wheel_input(0.0));
+    }
+    let top = text_top(&shapes, "b5");
+    assert!(
+        top.is_some_and(|y| (0.0..40.0).contains(&y)),
+        "the revealed block is at {top:?}, not the top of the view"
+    );
+}
