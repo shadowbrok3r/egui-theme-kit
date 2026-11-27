@@ -25,6 +25,8 @@ const MARKER_INSET: f32 = 6.0;
 const QUOTE_INSET: f32 = 10.0;
 /// Heading size as a multiple of body text, by level.
 const HEADING_SCALE: [f32; 6] = [1.4, 1.25, 1.12, 1.05, 1.0, 1.0];
+/// Narrowest a squeezed table column gets, in body font sizes.
+const TABLE_MIN_EMS: f32 = 6.0;
 /// Longest code block drawn; the rest is copied but not laid out.
 pub(crate) const CODE_MAX_CHARS: usize = 20_000;
 
@@ -59,6 +61,8 @@ pub enum Block<'a> {
         code: &'a str,
     },
     Rule,
+    /// A pipe table: its header row, delimiter row and body rows.
+    Table(&'a str),
     Blank,
 }
 
@@ -94,27 +98,104 @@ fn lines(text: &str) -> impl Iterator<Item = (&str, usize, usize)> {
 
 /// Splits a message body into blocks; an unclosed fence runs to the end of the text.
 pub fn blocks(text: &str) -> Vec<Block<'_>> {
+    let all: Vec<(&str, usize, usize)> = lines(text).collect();
     let mut out = Vec::new();
-    let mut iter = lines(text);
-    while let Some((line, _, after)) = iter.next() {
+    let mut i = 0;
+    while i < all.len() {
+        let (line, start, after) = all[i];
         if let Some(lang) = line.trim_start().strip_prefix("```") {
-            let mut end = text.len();
-            for (inner, start, _) in iter.by_ref() {
-                if inner.trim_start().starts_with("```") {
-                    end = start;
-                    break;
-                }
-            }
+            let close = (i + 1..all.len()).find(|&j| all[j].0.trim_start().starts_with("```"));
+            let end = close.map_or(text.len(), |j| all[j].1);
             let code = text[after.min(end)..end].trim_end_matches(['\n', '\r']);
             out.push(Block::Code {
                 lang: lang.trim(),
                 code,
             });
+            i = close.map_or(all.len(), |j| j + 1);
+            continue;
+        }
+        if let Some(&(next, _, _)) = all.get(i + 1)
+            && table_row(line)
+            && delimiter_row(next)
+            && split_cells(line).len() == split_cells(next).len()
+        {
+            let rows = (i + 2..all.len()).take_while(|&j| table_row(all[j].0)).count();
+            let end = all[i + 1 + rows].2;
+            out.push(Block::Table(text[start..end].trim_end_matches(['\n', '\r'])));
+            i += 2 + rows;
             continue;
         }
         out.push(line_block(line));
+        i += 1;
     }
     out
+}
+
+/// Whether `line` can be a row of a pipe table.
+fn table_row(line: &str) -> bool {
+    let body = line.trim();
+    !body.is_empty() && split_cells(body).len() > 1 || body.starts_with('|')
+}
+
+/// Whether `line` is the row under a table's header that sets its column alignment.
+fn delimiter_row(line: &str) -> bool {
+    line.contains('|')
+        && split_cells(line).iter().all(|cell| {
+            let dashes = cell.trim_start_matches(':').trim_end_matches(':');
+            !dashes.is_empty() && dashes.bytes().all(|b| b == b'-')
+        })
+}
+
+/// The trimmed cells of a table row, without its outer pipes; `\|` stays inside a cell.
+fn split_cells(row: &str) -> Vec<&str> {
+    let mut body = row.trim();
+    body = body.strip_prefix('|').unwrap_or(body);
+    if body.ends_with('|') && !body.ends_with("\\|") {
+        body = &body[..body.len() - 1];
+    }
+    let bytes = body.as_bytes();
+    let mut cells = Vec::new();
+    let mut from = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'|' && (i == 0 || bytes[i - 1] != b'\\') {
+            cells.push(body[from..i].trim());
+            from = i + 1;
+        }
+    }
+    cells.push(body[from..].trim());
+    cells
+}
+
+/// The alignment a delimiter cell sets: `:--` left, `:-:` centred, `--:` right.
+fn column_align(cell: &str) -> Align {
+    match (cell.starts_with(':'), cell.ends_with(':')) {
+        (true, true) => Align::Center,
+        (false, true) => Align::Max,
+        _ => Align::Min,
+    }
+}
+
+/// Column widths that fit `available`: columns narrower than an even share keep their width, the rest split what is left, none below `min`.
+fn column_widths(natural: &[f32], available: f32, min: f32) -> Vec<f32> {
+    if natural.iter().sum::<f32>() <= available {
+        return natural.to_vec();
+    }
+    let mut widths = natural.to_vec();
+    let mut open: Vec<usize> = (0..natural.len()).collect();
+    let mut left = available;
+    while !open.is_empty() {
+        let share = (left / open.len() as f32).max(min);
+        let (fit, wide): (Vec<usize>, Vec<usize>) = open.iter().partition(|&&c| natural[c] <= share);
+        if fit.is_empty() {
+            for c in wide {
+                widths[c] = share;
+            }
+            break;
+        }
+        left -= fit.iter().map(|&c| natural[c]).sum::<f32>();
+        open = wide;
+    }
+    widths
 }
 
 fn line_block(line: &str) -> Block<'_> {
@@ -492,9 +573,88 @@ pub(crate) fn show(ui: &mut Ui, rc: &mut RowCx<'_>, text: &str, ink: Color32, id
             Block::Shell(line) => shell_line(ui, rc, line),
             Block::Code { lang, code } => code_block(ui, rc, lang, code, id.with(("code", n))),
             Block::Rule => rule(ui, rc),
+            Block::Table(text) => table(ui, rc, text, ink, id.with(("table", n)), user),
             Block::Blank => {}
         }
     }
+}
+
+/// A pipe table on a plate: header tinted, rows striped, scrolling sideways when it cannot fit.
+fn table(ui: &mut Ui, rc: &mut RowCx<'_>, text: &str, ink: Color32, id: Id, user: bool) {
+    let mut lines = text.lines();
+    let Some(header) = lines.next().map(split_cells) else {
+        return;
+    };
+    let aligns: Vec<Align> = lines
+        .next()
+        .map(|d| split_cells(d).into_iter().map(column_align).collect())
+        .unwrap_or_default();
+    let columns = header.len();
+    let rows: Vec<Vec<String>> = std::iter::once(header)
+        .chain(lines.map(split_cells))
+        .map(|row| {
+            (0..columns)
+                .map(|c| row.get(c).map_or(String::new(), |cell| cell.replace("\\|", "|")))
+                .collect()
+        })
+        .collect();
+    let bold = Fonts::bold(ui, &rc.f.body);
+    let body = rc.f.body.clone();
+    let font = |r: usize| if r == 0 { &bold } else { &body };
+    let layout = |ui: &Ui, rc: &RowCx<'_>, cell: &str, r: usize, width: f32| {
+        let mut rich = Rich::new(width);
+        append_spans(ui, rc, &mut rich, cell, font(r), ink, user);
+        rich.layout(ui.ctx())
+    };
+    let gap = rc.m.gap.x * 3.0;
+    let pad = vec2(rc.m.gap.x * 1.5, rc.m.gap.y * 0.75);
+    let mut natural = vec![0.0_f32; columns];
+    for (r, row) in rows.iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            natural[c] = natural[c].max(layout(ui, rc, cell, r, f32::INFINITY).0.size().x.ceil());
+        }
+    }
+    let available = wrap_width(ui) - 2.0 * pad.x - gap * columns.saturating_sub(1) as f32;
+    let widths = column_widths(&natural, available, rc.f.body.size * TABLE_MIN_EMS);
+    let total = widths.iter().sum::<f32>() + gap * columns.saturating_sub(1) as f32 + 2.0 * pad.x;
+    let stripe = rc.p.code_chip.gamma_multiply(0.45);
+    surface_frame(ui, id, SurfaceKind::Plate, Margin::ZERO, |ui| {
+        egui::ScrollArea::horizontal()
+            .id_salt(id.with("scroll"))
+            .auto_shrink([true, true])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                for (r, row) in rows.iter().enumerate() {
+                    let slot = ui.painter().add(egui::Shape::Noop);
+                    let drawn = ui.vertical(|ui| {
+                        ui.add_space(pad.y);
+                        ui.horizontal_top(|ui| {
+                            ui.add_space(pad.x);
+                            for (c, cell) in row.iter().enumerate() {
+                                if c > 0 {
+                                    ui.add_space(gap);
+                                }
+                                let (galley, targets) = layout(ui, rc, cell, r, widths[c]);
+                                let align = aligns.get(c).copied().unwrap_or(Align::Min);
+                                ui.allocate_ui_with_layout(vec2(widths[c], 0.0), Layout::top_down(align), |ui| {
+                                    ui.set_width(widths[c]);
+                                    targets.show(ui, rc, galley);
+                                });
+                            }
+                            ui.add_space(pad.x);
+                        });
+                        ui.add_space(pad.y);
+                    });
+                    let rect = egui::Rect::from_min_size(drawn.response.rect.min, vec2(total, drawn.response.rect.height()));
+                    if r == 0 {
+                        ui.painter().set(slot, egui::Shape::rect_filled(rect, 0.0, rc.p.code_chip));
+                        ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, rc.p.separator));
+                    } else if r % 2 == 0 {
+                        ui.painter().set(slot, egui::Shape::rect_filled(rect, 0.0, stripe));
+                    }
+                }
+            });
+    });
 }
 
 fn indented(ui: &mut Ui, depth: usize, add: impl FnOnce(&mut Ui)) {
@@ -952,5 +1112,75 @@ mod tests {
     fn capping_counts_the_characters_left_out() {
         assert_eq!(capped("abcdef", 4), ("abcd", 2));
         assert_eq!(capped("ab", 4), ("ab", 0));
+    }
+
+    #[test]
+    fn a_pipe_table_is_one_block_up_to_the_first_line_without_a_pipe() {
+        let text = "Intro\n| Port | Service |\n|---:|:--|\n| 22 | ssh |\n| 2222 | ssh \\| alt |\nAfter";
+        assert_eq!(
+            blocks(text),
+            vec![
+                Block::Line { depth: 0, text: "Intro" },
+                Block::Table("| Port | Service |\n|---:|:--|\n| 22 | ssh |\n| 2222 | ssh \\| alt |"),
+                Block::Line { depth: 0, text: "After" },
+            ]
+        );
+        let bare = "a | b\n--- | ---\n1 | 2";
+        assert_eq!(blocks(bare), vec![Block::Table(bare)]);
+    }
+
+    #[test]
+    fn pipes_without_a_matching_delimiter_row_stay_text() {
+        assert_eq!(blocks("a | b\nc | d"), vec![
+            Block::Line { depth: 0, text: "a | b" },
+            Block::Line { depth: 0, text: "c | d" },
+        ]);
+        assert_eq!(blocks("a | b | c\n|---|---|")[0], Block::Line { depth: 0, text: "a | b | c" });
+        assert_eq!(blocks("plain\n---"), vec![Block::Line { depth: 0, text: "plain" }, Block::Rule]);
+        assert!(matches!(blocks("```\n| a |\n|---|\n```")[0], Block::Code { .. }));
+    }
+
+    #[test]
+    fn cells_drop_the_outer_pipes_and_keep_escaped_ones() {
+        assert_eq!(split_cells("| a | b |"), vec!["a", "b"]);
+        assert_eq!(split_cells("a|b"), vec!["a", "b"]);
+        assert_eq!(split_cells("| x \\| y | |"), vec!["x \\| y", ""]);
+        assert_eq!(split_cells("| only |"), vec!["only"]);
+        assert_eq!(
+            split_cells("|:--|:-:|--:|").into_iter().map(column_align).collect::<Vec<_>>(),
+            vec![Align::Min, Align::Center, Align::Max]
+        );
+    }
+
+    #[test]
+    fn narrow_columns_keep_their_width_and_wide_ones_share_the_rest() {
+        assert_eq!(column_widths(&[40.0, 60.0], 200.0, 30.0), vec![40.0, 60.0]);
+        assert_eq!(column_widths(&[40.0, 500.0, 300.0], 340.0, 30.0), vec![40.0, 150.0, 150.0]);
+        assert_eq!(column_widths(&[400.0, 400.0, 400.0], 60.0, 50.0), vec![50.0, 50.0, 50.0]);
+    }
+
+    #[test]
+    fn a_table_draws_its_cells_and_not_its_pipes() {
+        let ctx = egui::Context::default();
+        let text = "| Port | **Finding** |\n|---|---|\n| 2222 | password logins |\n| 9777 | `docker.sock` exposed |";
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::chat::ChatText::new("t").markdown(ui, text);
+        });
+        out.textures_delta.clear();
+        let mut drawn = Vec::new();
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                _ => {}
+            }
+        }
+        for c in &out.shapes {
+            walk(&c.shape, &mut drawn);
+        }
+        for cell in ["Port", "Finding", "2222", "password logins", "docker.sock exposed"] {
+            assert!(drawn.iter().any(|t| t == cell), "{cell:?} not drawn in {drawn:?}");
+        }
+        assert!(!drawn.iter().any(|t| t.contains('|') || t.contains("---")), "{drawn:?}");
     }
 }
